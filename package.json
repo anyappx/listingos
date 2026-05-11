@@ -4,11 +4,19 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:4000": "next dev -p 4000",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "worker": "node --loader ts-node/esm workers/video.ts"
+    "worker": "node --loader ts-node/esm workers/video.ts",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:movie": "playwright test tests/e2e/10-full-movie.spec.ts",
+    "test:generate": "playwright test tests/e2e/05-generate-and-verify.spec.ts",
+    "test:overlays": "playwright test tests/e2e/06-overlays.spec.ts",
+    "test:fast": "playwright test tests/e2e/01-landing.spec.ts tests/e2e/02-auth.spec.ts",
+    "test:headed": "playwright test --headed"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.1",
@@ -55,6 +63,7 @@
     "zustand": "^5.0.13"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@tailwindcss/postcss": "^4",
     "@types/cheerio": "^1.0.0",
     "@types/fluent-ffmpeg": "^2.1.28",

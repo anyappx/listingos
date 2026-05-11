@@ -69,20 +69,29 @@ const ROOM_LABELS = [
   "Pool Area", "Yard", "View", "Neighborhood",
 ];
 
-// ─── Ken Burns Patterns (6 distinct directions) ───────────────────────────────
-// Using fractional pixel offsets to avoid stuck frames
+// ─── Parallax motion presets (used by parallax-cpu.py) ───────────────────────
+// Each position in the photo sequence gets a distinct camera move.
+// reverse: true = plays motion backwards (e.g. zoom-out instead of zoom-in)
+const PARALLAX_PRESETS = [
+  { motion: "dolly",      intensity: 1.4, reverse: false }, // exterior: push in
+  { motion: "zoom",       intensity: 1.0, reverse: false }, // living room: zoom in
+  { motion: "horizontal", intensity: 1.2, reverse: false }, // kitchen: pan right
+  { motion: "orbital",    intensity: 1.0, reverse: false }, // bedroom: orbit
+  { motion: "circle",     intensity: 1.1, reverse: false }, // bathroom: arc
+  { motion: "zoom",       intensity: 1.0, reverse: true  }, // bonus: zoom out
+  { motion: "horizontal", intensity: 1.0, reverse: true  }, // pan left
+  { motion: "dolly",      intensity: 1.2, reverse: true  }, // pull back
+  { motion: "vertical",   intensity: 1.0, reverse: false }, // rise up
+  { motion: "orbital",    intensity: 1.2, reverse: true  }, // reverse orbit
+];
+
+// ─── Ken Burns Patterns (fallback if Python/ONNX unavailable) ─────────────────
 const KB_PATTERNS = [
-  // zoom in from center
   { z: "min(zoom+0.0015,1.5)", x: "iw/2-(iw/zoom/2)", y: "ih/2-(ih/zoom/2)" },
-  // zoom in from top-left
   { z: "min(zoom+0.0015,1.4)", x: "0", y: "0" },
-  // zoom in from top-right
   { z: "min(zoom+0.0015,1.4)", x: "iw/zoom*0.5", y: "0" },
-  // pan right + slight zoom (fractional offset)
   { z: "min(zoom+0.0008,1.2)", x: "if(eq(on,1),0,min(x+(iw/zoom*0.004),iw-(iw/zoom)))", y: "ih/2-(ih/zoom/2)" },
-  // pan left + slight zoom (fractional offset)
   { z: "min(zoom+0.0008,1.2)", x: "if(eq(on,1),iw-(iw/zoom),max(x-(iw/zoom*0.004),0))", y: "ih/2-(ih/zoom/2)" },
-  // zoom out from center
   { z: "if(eq(on,1),1.4,max(zoom-0.0015,1.001))", x: "iw/2-(iw/zoom/2)", y: "ih/2-(ih/zoom/2)" },
 ];
 
@@ -177,7 +186,28 @@ async function addRoomLabelToPhoto(inputPath, outputPath, roomLabel) {
   return outputPath;
 }
 
-// ─── M1: Ken Burns clip (1920×1080) ──────────────────────────────────────────
+// ─── M1: 2.5D Parallax clip via Depth Anything V2 ONNX (primary) ─────────────
+function generateParallaxClip(imagePath, outputPath, duration, presetIndex) {
+  const { execSync } = require("child_process");
+  const preset = PARALLAX_PRESETS[presetIndex % PARALLAX_PRESETS.length];
+  const pythonScript = path.join(__dirname, "parallax-cpu.py");
+  const python3 = process.env.PYTHON3_PATH || "python3";
+
+  return new Promise((resolve, reject) => {
+    if (!require("fs").existsSync(pythonScript)) {
+      return reject(new Error("parallax-cpu.py not found — falling back"));
+    }
+    const cmd = `${python3} "${pythonScript}" "${imagePath}" "${outputPath}" ${preset.motion} ${preset.intensity} ${duration} ${preset.reverse}`;
+    try {
+      execSync(cmd, { stdio: "pipe", timeout: 60000 });
+      resolve();
+    } catch (e) {
+      reject(new Error(`parallax-cpu.py failed: ${e.stderr?.toString()?.slice(0, 200) || e.message}`));
+    }
+  });
+}
+
+// ─── M1: Ken Burns clip (1920×1080) — fallback when Python unavailable ────────
 function createKenBurnsClip(imagePath, outputPath, duration, patternIndex) {
   const p = KB_PATTERNS[patternIndex % KB_PATTERNS.length];
   const fps = 25;
@@ -709,8 +739,17 @@ async function run() {
       try {
         await downloadFile(photos[i].url, rawPath);
         const preprocessedPath = await preprocessPhoto(rawPath, processedPath);
-        await createKenBurnsClip(preprocessedPath, clipPath, CLIP_DURATION, i);
-        console.log(`[pipeline] Clip ${i} done (pattern ${i % KB_PATTERNS.length})`);
+
+        // Try 2.5D parallax (depth-based) first; fall back to Ken Burns
+        try {
+          await generateParallaxClip(preprocessedPath, clipPath, CLIP_DURATION, i);
+          console.log(`[pipeline] Clip ${i} done (parallax: ${PARALLAX_PRESETS[i % PARALLAX_PRESETS.length].motion})`);
+        } catch (pErr) {
+          console.warn(`[pipeline] Parallax failed for clip ${i}, using Ken Burns: ${pErr.message}`);
+          await createKenBurnsClip(preprocessedPath, clipPath, CLIP_DURATION, i);
+          console.log(`[pipeline] Clip ${i} done (ken-burns fallback, pattern ${i % KB_PATTERNS.length})`);
+        }
+
         clipPaths.push(clipPath);
       } catch (e) {
         console.error(`[pipeline] Clip ${i} failed:`, e.message);
