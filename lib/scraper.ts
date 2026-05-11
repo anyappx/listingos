@@ -188,13 +188,36 @@ function parseZillowHtml($: cheerio.CheerioAPI, html: string): ScrapedData {
   return { address, city, state, zip, price, beds, baths, sqft, description, photoUrls };
 }
 
+async function scrapeZillowViaScraperApi(url: string): Promise<string> {
+  const key = process.env.SCRAPER_API_KEY;
+  if (!key) throw new Error("No SCRAPER_API_KEY");
+  const apiUrl = `http://api.scraperapi.com?api_key=${key}&url=${encodeURIComponent(url)}&render=true&premium=true`;
+  const res = await fetch(apiUrl, { signal: AbortSignal.timeout(60000) });
+  if (!res.ok) throw new Error(`ScraperAPI ${res.status}`);
+  return res.text();
+}
+
 async function scrapeZillow(url: string): Promise<ScrapedData> {
-  // Use Playwright with system Chrome — navigates through zillow.com homepage first
-  // so PerimeterX initializes before we hit the listing page.
-  const html = await playwrightFetch(
-    ["https://www.zillow.com/", url],
-    3000
-  );
+  let html = "";
+
+  // Try ScraperAPI first if key is set (bypasses PerimeterX via residential IPs)
+  const scraperKey = process.env.SCRAPER_API_KEY;
+  if (scraperKey) {
+    try {
+      html = await scrapeZillowViaScraperApi(url);
+      console.log(`[scraper] ScraperAPI fetched ${html.length} bytes for Zillow`);
+    } catch (e) {
+      console.warn("[scraper] ScraperAPI failed, trying Playwright:", e);
+    }
+  }
+
+  // Fallback: Playwright with homepage warmup
+  if (!html || html.includes("Access to this page has been denied") || html.length < 10000) {
+    html = await playwrightFetch(
+      ["https://www.zillow.com/", url],
+      3000
+    );
+  }
 
   if (html.includes("Access to this page has been denied") || html.length < 10000) {
     throw new Error("Zillow blocked even with browser automation");

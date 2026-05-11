@@ -127,6 +127,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Merge scraper-level warnings (e.g. Zillow blocked) with photo warnings
+    const allWarnings = [
+      ...(scraped.warnings || []),
+      ...photoWarnings,
+    ];
+
     return NextResponse.json({
       listingId,
       slug,
@@ -138,7 +144,7 @@ export async function POST(request: NextRequest) {
       sqft: scraped.sqft,
       description: scraped.description,
       photos,
-      warnings: photoWarnings,
+      warnings: allWarnings,
       noPhotos: photos.length === 0,
     });
   } catch (err) {

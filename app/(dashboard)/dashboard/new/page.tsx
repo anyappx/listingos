@@ -83,7 +83,16 @@ export default function NewListingPage() {
       setEditBeds(data.beds ? String(data.beds) : "");
       setEditBaths(data.baths ? String(data.baths) : "");
       setEditSqft(data.sqft ? String(data.sqft) : "");
-      toast.success(`Found ${data.photos.length} photos`);
+
+      // Surface any scraper warnings (e.g. Zillow blocked)
+      const zillowWarning = data.warnings?.find((w: { photoIndex: number; warning: string }) => w.photoIndex === -1);
+      if (zillowWarning) {
+        toast.warning(zillowWarning.warning);
+      } else if (data.photos.length === 0) {
+        toast.warning("No photos found — drag and drop your own photos below.");
+      } else {
+        toast.success(`Found ${data.photos.length} photos`);
+      }
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Failed to import listing");
     } finally {
