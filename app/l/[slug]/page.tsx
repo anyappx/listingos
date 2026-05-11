@@ -15,15 +15,51 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   const supabase = createAdminClient();
   const { data: listing } = await supabase
     .from("listings")
-    .select("address, city, price, description_mls")
+    .select("address, city, state, price, description_mls, photos, id")
     .eq("slug", slug)
     .single();
 
   if (!listing) return { title: "Listing Not Found" };
 
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "";
+  const pageUrl = `${appUrl}/l/${slug}`;
+  const title = `${listing.address} — ${listing.city}${listing.state ? ", " + listing.state : ""}`;
+  const description =
+    listing.description_mls ||
+    `${listing.address}, ${listing.city}${listing.price ? ` · $${Number(listing.price).toLocaleString()}` : ""}`;
+
+  // Thumbnail from first photo
+  const photos = (listing.photos as { url: string }[]) || [];
+  const ogImage = photos[0]?.url || `${appUrl}/og-default.jpg`;
+
+  // Video URL from videos table
+  const { data: video } = await supabase
+    .from("videos")
+    .select("url_16x9, thumbnail_url")
+    .eq("listing_id", listing.id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .single();
+
+  const ogImageFinal = video?.thumbnail_url || ogImage;
+
   return {
-    title: `${listing.address} — ${listing.city}`,
-    description: listing.description_mls || `${listing.address}, ${listing.city}`,
+    title,
+    description,
+    openGraph: {
+      title,
+      description,
+      url: pageUrl,
+      type: "website",
+      images: [{ url: ogImageFinal, width: 1920, height: 1080, alt: listing.address }],
+      videos: video?.url_16x9 ? [{ url: video.url_16x9, type: "video/mp4" }] : [],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description,
+      images: [ogImageFinal],
+    },
   };
 }
 
@@ -71,8 +107,43 @@ export default async function PublicListingPage({ params }: { params: Promise<{ 
   const primaryColor = typedBrandKit?.primary_color || "#1A2E4A";
   const photos = typedListing.photos || [];
 
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || "";
+  const pageUrl = `${appUrl}/l/${typedListing.slug}`;
+
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "RealEstateListing",
+    name: typedListing.address || "Property Listing",
+    description: typedListing.description_mls || undefined,
+    url: pageUrl,
+    offers: typedListing.price
+      ? {
+          "@type": "Offer",
+          price: typedListing.price,
+          priceCurrency: "USD",
+        }
+      : undefined,
+    address: {
+      "@type": "PostalAddress",
+      streetAddress: typedListing.address || undefined,
+      addressLocality: typedListing.city || undefined,
+      addressRegion: typedListing.state || undefined,
+      postalCode: typedListing.zip || undefined,
+    },
+    numberOfRooms: typedListing.beds || undefined,
+    floorSize: typedListing.sqft
+      ? { "@type": "QuantitativeValue", value: typedListing.sqft, unitCode: "FTK" }
+      : undefined,
+  };
+
   return (
     <div className="min-h-screen bg-background">
+      {/* JSON-LD structured data */}
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
+
       {/* View tracker */}
       <ViewTracker listingId={typedListing.id} />
 

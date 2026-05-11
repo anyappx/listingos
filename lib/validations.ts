@@ -45,6 +45,10 @@ export const BrandInputSchema = z.object({
   headshotUrl: z.string().url().optional().nullable(),
 });
 
+export const BrandVoiceInputSchema = z.object({
+  voiceExamples: z.string().min(20, "Please provide at least 20 characters of caption examples"),
+});
+
 export const LeadInputSchema = z.object({
   listingId: z.string().uuid("Invalid listing ID"),
   name: z.string().min(1).max(200).optional(),
@@ -91,6 +95,7 @@ export const ScrapedListingSchema = z.object({
 export type ScrapeInput = z.infer<typeof ScrapeInputSchema>;
 export type GenerateInput = z.infer<typeof GenerateInputSchema>;
 export type BrandInput = z.infer<typeof BrandInputSchema>;
+export type BrandVoiceInput = z.infer<typeof BrandVoiceInputSchema>;
 export type LeadInput = z.infer<typeof LeadInputSchema>;
 export type UpdateListingInput = z.infer<typeof UpdateListingSchema>;
 export type UploadInput = z.infer<typeof UploadInputSchema>;

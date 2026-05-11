@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -15,6 +16,8 @@ import {
   User as UserIcon,
   LogOut,
   Plus,
+  Menu,
+  X,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { toast } from "sonner";
@@ -47,6 +50,7 @@ export function Sidebar({ user }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createClient();
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   const plan = user?.plan || "trial";
   const used = user?.listings_used_this_month || 0;
@@ -59,16 +63,28 @@ export function Sidebar({ user }: SidebarProps) {
     toast.success("Signed out");
   }
 
-  return (
-    <aside className="w-64 h-full border-r bg-sidebar flex flex-col">
+  function closeMobile() {
+    setMobileOpen(false);
+  }
+
+  const sidebarContent = (
+    <>
       {/* Logo */}
-      <div className="p-6 border-b">
-        <Link href="/dashboard" className="flex items-center gap-2">
+      <div className="p-6 border-b flex items-center justify-between">
+        <Link href="/dashboard" className="flex items-center gap-2" onClick={closeMobile}>
           <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
             <Video className="w-4 h-4 text-primary-foreground" />
           </div>
           <span className="font-semibold text-lg">ListingOS</span>
         </Link>
+        {/* Close button — mobile only */}
+        <button
+          className="md:hidden p-1 rounded-md text-muted-foreground hover:text-foreground"
+          onClick={closeMobile}
+          aria-label="Close menu"
+        >
+          <X className="w-5 h-5" />
+        </button>
       </div>
 
       {/* Navigation */}
@@ -83,6 +99,7 @@ export function Sidebar({ user }: SidebarProps) {
             <Link
               key={item.href}
               href={item.href}
+              onClick={closeMobile}
               className={cn(
                 "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors",
                 isActive
@@ -111,7 +128,7 @@ export function Sidebar({ user }: SidebarProps) {
           <Progress value={usagePercent} className="h-1.5" />
         </div>
         {plan === "trial" && (
-          <Link href="/dashboard/account">
+          <Link href="/dashboard/account" onClick={closeMobile}>
             <Button variant="outline" size="sm" className="w-full text-xs">
               Upgrade plan
             </Button>
@@ -127,6 +144,40 @@ export function Sidebar({ user }: SidebarProps) {
           Sign out
         </Button>
       </div>
-    </aside>
+    </>
+  );
+
+  return (
+    <>
+      {/* Hamburger button — mobile only */}
+      <button
+        className="md:hidden fixed top-4 left-4 z-40 p-2 rounded-md bg-background border shadow-sm"
+        onClick={() => setMobileOpen(true)}
+        aria-label="Open menu"
+      >
+        <Menu className="w-5 h-5" />
+      </button>
+
+      {/* Backdrop — mobile only, shown when drawer is open */}
+      {mobileOpen && (
+        <div
+          className="md:hidden fixed inset-0 z-40 bg-black/50"
+          onClick={closeMobile}
+          aria-hidden="true"
+        />
+      )}
+
+      {/* Sidebar — always visible on desktop, drawer on mobile */}
+      <aside
+        className={cn(
+          "w-64 h-full border-r bg-sidebar flex flex-col",
+          // Mobile: fixed drawer sliding in from left
+          "fixed md:relative inset-y-0 left-0 z-50 transition-transform duration-200",
+          mobileOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+        )}
+      >
+        {sidebarContent}
+      </aside>
+    </>
   );
 }

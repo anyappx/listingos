@@ -10,7 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Upload, Loader2, Save } from "lucide-react";
+import { Upload, Loader2, Save, CheckCircle2 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 import { createClient } from "@/lib/supabase/client";
 
 
@@ -35,6 +36,9 @@ export default function BrandPage() {
   const [licenseNumber, setLicenseNumber] = useState("");
   const [brokerage, setBrokerage] = useState("");
   const [phone, setPhone] = useState("");
+  const [voiceExamples, setVoiceExamples] = useState("");
+  const [analyzingVoice, setAnalyzingVoice] = useState(false);
+  const [voiceProfile, setVoiceProfile] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -51,6 +55,7 @@ export default function BrandPage() {
           setLicenseNumber(brandKit.license_number || "");
           setBrokerage(brandKit.brokerage || "");
           setPhone(brandKit.phone || "");
+          setVoiceProfile(brandKit.voice_profile ?? null);
         }
       } finally {
         setLoading(false);
@@ -112,6 +117,32 @@ export default function BrandPage() {
   const { getRootProps: getHeadshotRootProps, getInputProps: getHeadshotInputProps } = useDropzone({
     onDrop: onDropHeadshot, accept: { "image/*": [] }, maxFiles: 1,
   });
+
+  async function handleAnalyzeVoice() {
+    if (voiceExamples.trim().length < 20) {
+      toast.error("Please enter at least 20 characters of caption examples");
+      return;
+    }
+    setAnalyzingVoice(true);
+    try {
+      const res = await fetch("/api/brand/voice", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ voiceExamples }),
+      });
+      if (!res.ok) {
+        const { error } = await res.json() as { error?: string };
+        throw new Error(error || "Analyze failed");
+      }
+      const { voiceProfile: saved } = await res.json() as { voiceProfile: string };
+      setVoiceProfile(saved);
+      toast.success("Voice profile saved!");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to analyze voice");
+    } finally {
+      setAnalyzingVoice(false);
+    }
+  }
 
   async function handleSave() {
     setSaving(true);
@@ -252,6 +283,46 @@ export default function BrandPage() {
                   </SelectContent>
                 </Select>
               </div>
+            </CardContent>
+          </Card>
+
+          {/* Brand Voice */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Brand Voice (optional)</CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">
+                Paste 3–5 of your best captions. Claude analyzes your writing style and matches future content.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <Textarea
+                value={voiceExamples}
+                onChange={(e) => setVoiceExamples(e.target.value)}
+                placeholder="Paste examples of your captions here..."
+                rows={6}
+              />
+              {voiceProfile && (
+                <div className="flex items-start gap-2 rounded-md border border-green-200 bg-green-50 px-3 py-2">
+                  <CheckCircle2 className="w-4 h-4 text-green-600 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-xs font-medium text-green-800">Voice profile active</p>
+                    <p className="text-xs text-green-700 mt-0.5">
+                      {voiceProfile.substring(0, 80)}{voiceProfile.length > 80 ? "…" : ""}
+                    </p>
+                  </div>
+                </div>
+              )}
+              <Button
+                variant="outline"
+                onClick={handleAnalyzeVoice}
+                disabled={analyzingVoice}
+                className="w-full sm:w-auto"
+              >
+                {analyzingVoice ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : null}
+                Analyze &amp; Save Voice
+              </Button>
             </CardContent>
           </Card>
         </div>

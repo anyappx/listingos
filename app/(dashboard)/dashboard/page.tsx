@@ -7,7 +7,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Video, Eye, Users, Plus, TrendingUp } from "lucide-react";
-import type { Listing, User } from "@/lib/types";
+import type { Listing, User, BrandKit } from "@/lib/types";
+import { OnboardingBanner } from "@/components/dashboard/onboarding-banner";
 
 const planLimits: Record<string, number> = { trial: 1, solo: 3, agent: 10 };
 
@@ -18,21 +19,23 @@ export default async function DashboardPage() {
   } = await supabase.auth.getUser();
   if (!authUser) redirect("/login");
 
-  const [{ data: userData }, { data: listings }, { data: videos }] = await Promise.all([
-    supabase.from("users").select("*").eq("id", authUser.id).single(),
-    supabase
-      .from("listings")
-      .select("id, address, city, price, photos, slug, view_count, lead_count, created_at")
-      .eq("user_id", authUser.id)
-      .order("created_at", { ascending: false })
-      .limit(3),
-    supabase
-      .from("videos")
-      .select("id, listing_id, thumbnail_url, created_at")
-      .eq("user_id", authUser.id)
-      .order("created_at", { ascending: false })
-      .limit(3),
-  ]);
+  const [{ data: userData }, { data: listings }, { data: videos }, { data: brandKit }] =
+    await Promise.all([
+      supabase.from("users").select("*").eq("id", authUser.id).single(),
+      supabase
+        .from("listings")
+        .select("id, address, city, price, photos, slug, view_count, lead_count, created_at")
+        .eq("user_id", authUser.id)
+        .order("created_at", { ascending: false })
+        .limit(3),
+      supabase
+        .from("videos")
+        .select("id, listing_id, thumbnail_url, created_at")
+        .eq("user_id", authUser.id)
+        .order("created_at", { ascending: false })
+        .limit(3),
+      supabase.from("brand_kits").select("logo_url, agent_name, phone").eq("user_id", authUser.id).single(),
+    ]);
 
   const user = userData as User | null;
   const plan = user?.plan || "trial";
@@ -46,7 +49,9 @@ export default async function DashboardPage() {
   const videoMap = new Map((videos || []).map((v) => [v.listing_id, v]));
 
   return (
-    <div className="p-8 max-w-5xl mx-auto">
+    <div className="max-w-5xl mx-auto">
+      <OnboardingBanner brandKit={brandKit as BrandKit | null} />
+    <div className="p-8">
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold">Dashboard</h1>
@@ -203,6 +208,7 @@ export default async function DashboardPage() {
           )}
         </CardContent>
       </Card>
+    </div>
     </div>
   );
 }

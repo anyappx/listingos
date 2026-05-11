@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -9,7 +9,7 @@ import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, Loader2, Copy, AlertCircle } from "lucide-react";
+import { CheckCircle2, Loader2, Copy, AlertCircle, Clock } from "lucide-react";
 import type { JobStatusResponse } from "@/lib/types";
 
 const STEPS = [
@@ -24,6 +24,8 @@ const STEPS = [
   "Done!",
 ];
 
+const STUCK_THRESHOLD_MS = 3 * 60 * 1000; // 3 minutes
+
 function copyToClipboard(text: string) {
   navigator.clipboard.writeText(text).then(() => toast.success("Copied!"));
 }
@@ -36,6 +38,12 @@ function GeneratingContent() {
 
   const [status, setStatus] = useState<JobStatusResponse | null>(null);
   const [showDescriptions, setShowDescriptions] = useState(false);
+  const [showStuckWarning, setShowStuckWarning] = useState(false);
+
+  const lastProgressRef = useRef<number>(-1);
+  const lastProgressTimeRef = useRef<number>(0);
+  const stuckTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!jobId) {
@@ -43,7 +51,7 @@ function GeneratingContent() {
       return;
     }
 
-    // Show descriptions after 15 seconds (productive dead time)
+    // Show descriptions after 15 seconds
     const descTimer = setTimeout(() => setShowDescriptions(true), 15000);
 
     const poll = async () => {
@@ -57,28 +65,79 @@ function GeneratingContent() {
           return;
         }
 
-        if (data.status === "failed") {
-          toast.error(data.error || "Video generation failed. Credit refunded.");
-          return;
+        if (data.status === "failed") return;
+
+        // Stuck detection
+        const currentPercent =
+          (data.status === "processing" || data.status === "queued")
+            ? data.progressPercent
+            : 0;
+
+        if (currentPercent !== lastProgressRef.current) {
+          lastProgressRef.current = currentPercent;
+          lastProgressTimeRef.current = performance.now();
+          setShowStuckWarning(false);
+          if (stuckTimerRef.current) clearTimeout(stuckTimerRef.current);
+          stuckTimerRef.current = setTimeout(() => setShowStuckWarning(true), STUCK_THRESHOLD_MS);
         }
 
-        // Continue polling
-        setTimeout(poll, 5000);
+        pollRef.current = setTimeout(poll, 5000);
       } catch {
-        setTimeout(poll, 5000);
+        pollRef.current = setTimeout(poll, 5000);
       }
     };
 
     poll();
-    return () => clearTimeout(descTimer);
+
+    return () => {
+      clearTimeout(descTimer);
+      if (pollRef.current) clearTimeout(pollRef.current);
+      if (stuckTimerRef.current) clearTimeout(stuckTimerRef.current);
+    };
   }, [jobId, listingId, router]);
 
-  const progressPercent = status?.status === "processing" || status?.status === "queued"
-    ? status.progressPercent
-    : 0;
-  const progressStep = status?.status === "processing" || status?.status === "queued"
-    ? status.progressStep
-    : "Waiting to start...";
+  const progressPercent =
+    status?.status === "processing" || status?.status === "queued"
+      ? status.progressPercent
+      : 0;
+  const progressStep =
+    status?.status === "processing" || status?.status === "queued"
+      ? status.progressStep
+      : "Waiting to start...";
+
+  if (status?.status === "failed") {
+    return (
+      <div className="p-8 max-w-3xl mx-auto">
+        <div className="text-center py-16">
+          <AlertCircle className="w-16 h-16 text-destructive mx-auto mb-6" />
+          <h1 className="text-2xl font-bold mb-2">Generation Failed</h1>
+          <p className="text-muted-foreground mb-1">
+            {status.error || "Something went wrong during video generation."}
+          </p>
+          <p className="text-sm text-muted-foreground mb-8">
+            Your credit has been refunded automatically.
+          </p>
+          <div className="flex gap-3 justify-center">
+            <Button
+              variant="outline"
+              onClick={() => router.push("/dashboard/new")}
+            >
+              Start fresh
+            </Button>
+            {listingId && (
+              <Button
+                onClick={() =>
+                  router.push(`/dashboard/new/customize?listingId=${listingId}`)
+                }
+              >
+                Try Again
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-8 max-w-3xl mx-auto">
@@ -98,64 +157,90 @@ function GeneratingContent() {
       </div>
 
       <div className="text-center mb-8">
-        {status?.status === "failed" ? (
-          <div className="flex flex-col items-center">
-            <AlertCircle className="w-12 h-12 text-destructive mb-4" />
-            <h1 className="text-2xl font-bold mb-2">Generation Failed</h1>
-            <p className="text-muted-foreground mb-4">Your credit has been refunded.</p>
-            <Button onClick={() => router.push("/dashboard/new")}>Try Again</Button>
-          </div>
-        ) : (
-          <>
-            <div className="flex items-center justify-center gap-3 mb-4">
-              <Loader2 className="w-8 h-8 animate-spin text-primary" />
-              <h1 className="text-2xl font-bold">Creating your video...</h1>
-            </div>
-            <p className="text-muted-foreground">
-              Usually ready in about 2 minutes...
-            </p>
-          </>
-        )}
+        <div className="flex items-center justify-center gap-3 mb-4">
+          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+          <h1 className="text-2xl font-bold">Creating your video...</h1>
+        </div>
+        <p className="text-muted-foreground">Usually ready in about 2 minutes</p>
       </div>
 
-      {/* Progress bar */}
-      {status?.status !== "failed" && (
-        <Card className="mb-8">
-          <CardContent className="pt-6 space-y-4">
-            <Progress value={progressPercent} className="h-3" />
-            <div className="space-y-2">
-              {STEPS.map((step, i) => {
-                const stepPercent = (i / (STEPS.length - 1)) * 100;
-                const isComplete = progressPercent > stepPercent;
-                const isCurrent = progressStep === step;
-                return (
-                  <div
-                    key={step}
-                    className={`flex items-center gap-3 text-sm transition-colors ${
-                      isComplete
-                        ? "text-foreground"
-                        : isCurrent
-                        ? "text-primary font-medium"
-                        : "text-muted-foreground"
-                    }`}
+      {/* Stuck warning */}
+      {showStuckWarning && (
+        <Card className="mb-6 border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/20">
+          <CardContent className="pt-4 pb-4">
+            <div className="flex items-start gap-3">
+              <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-sm font-medium text-amber-800 dark:text-amber-400">
+                  Taking longer than usual
+                </p>
+                <p className="text-xs text-amber-700 dark:text-amber-500 mt-0.5">
+                  Still working on it. Large photos can take a little longer.
+                </p>
+              </div>
+              <div className="flex gap-2 shrink-0">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={() => setShowStuckWarning(false)}
+                >
+                  Keep waiting
+                </Button>
+                {listingId && (
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    className="h-7 text-xs"
+                    onClick={() =>
+                      router.push(`/dashboard/new/customize?listingId=${listingId}`)
+                    }
                   >
-                    {isComplete ? (
-                      <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
-                    ) : isCurrent ? (
-                      <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                    ) : (
-                      <div className="w-4 h-4 rounded-full border shrink-0" />
-                    )}
-                    {step}
-                  </div>
-                );
-              })}
+                    Cancel
+                  </Button>
+                )}
+              </div>
             </div>
           </CardContent>
         </Card>
       )}
 
-      {/* Descriptions appear after 15s — productive wait */}
+      {/* Progress bar */}
+      <Card className="mb-8">
+        <CardContent className="pt-6 space-y-4">
+          <Progress value={progressPercent} className="h-3" />
+          <div className="space-y-2">
+            {STEPS.map((step, i) => {
+              const stepPercent = (i / (STEPS.length - 1)) * 100;
+              const isComplete = progressPercent > stepPercent;
+              const isCurrent = progressStep === step;
+              return (
+                <div
+                  key={step}
+                  className={`flex items-center gap-3 text-sm transition-colors ${
+                    isComplete
+                      ? "text-foreground"
+                      : isCurrent
+                      ? "text-primary font-medium"
+                      : "text-muted-foreground"
+                  }`}
+                >
+                  {isComplete ? (
+                    <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
+                  ) : isCurrent ? (
+                    <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                  ) : (
+                    <div className="w-4 h-4 rounded-full border shrink-0" />
+                  )}
+                  {step}
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Descriptions appear after 15s — productive dead time */}
       {showDescriptions && listingId && <DescriptionPreview listingId={listingId} />}
     </div>
   );
@@ -169,14 +254,13 @@ function DescriptionPreview({ listingId }: { listingId: string }) {
   } | null>(null);
 
   useEffect(() => {
-    // Try to generate content if not already done
     fetch(`/api/content`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ listingId }),
     })
       .then((r) => r.json())
-      .then((d) => {
+      .then((d: { descriptions?: typeof data }) => {
         if (d.descriptions) setData(d.descriptions);
       })
       .catch(() => {});
@@ -212,9 +296,9 @@ function DescriptionPreview({ listingId }: { listingId: string }) {
             <TabsTrigger value="luxury">Luxury</TabsTrigger>
           </TabsList>
           {[
-            { key: "mls", label: "MLS", text: data.descriptionMls },
-            { key: "social", label: "Social", text: data.descriptionSocial },
-            { key: "luxury", label: "Luxury", text: data.descriptionLuxury },
+            { key: "mls", text: data.descriptionMls },
+            { key: "social", text: data.descriptionSocial },
+            { key: "luxury", text: data.descriptionLuxury },
           ].map(({ key, text }) => (
             <TabsContent key={key} value={key}>
               <div className="relative">
@@ -236,10 +320,15 @@ function DescriptionPreview({ listingId }: { listingId: string }) {
   );
 }
 
-
 export default function GeneratingPage() {
   return (
-    <Suspense fallback={<div className="p-8 flex items-center justify-center"><Loader2 className="animate-spin" /></div>}>
+    <Suspense
+      fallback={
+        <div className="p-8 flex items-center justify-center">
+          <Loader2 className="animate-spin" />
+        </div>
+      }
+    >
       <GeneratingContent />
     </Suspense>
   );

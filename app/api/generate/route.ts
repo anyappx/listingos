@@ -1,9 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { GenerateInputSchema } from "@/lib/validations";
-import { isDevMode } from "@/lib/dev-pipeline";
-import { spawn } from "child_process";
-import * as path from "path";
 
 export async function POST(request: NextRequest) {
   const supabase = await createClient();
@@ -20,7 +17,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message }, { status: 400 });
   }
 
-  const { listingId, style, durationSeconds, formats, musicTrackId, includeNeighborhoodBroll } = parsed.data;
+  const { listingId, style, durationSeconds, musicTrackId, includeNeighborhoodBroll } = parsed.data;
   const adminSupabase = createAdminClient();
 
   // Verify listing belongs to user
@@ -60,7 +57,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Create video_jobs row
+  // Create video_jobs row — worker-poll.js picks this up
   const jobId = crypto.randomUUID();
   const { error: jobError } = await adminSupabase.from("video_jobs").insert({
     id: jobId,
@@ -81,25 +78,9 @@ export async function POST(request: NextRequest) {
     if (u && u.listings_used_this_month > 0) {
       await adminSupabase.from("users").update({ listings_used_this_month: u.listings_used_this_month - 1 }).eq("id", user.id);
     }
+    console.error(`[api/generate] job insert failed: ${jobError.message}`);
     return NextResponse.json({ error: "Failed to create job" }, { status: 500 });
   }
 
-  if (isDevMode()) {
-    // Dev mode: spawn standalone Node.js pipeline script — avoids Next.js/Turbopack bundling issues
-    const scriptPath = path.join(process.cwd(), "scripts", "pipeline.js");
-    const nodeBin = process.execPath;
-    const child = spawn(nodeBin, [scriptPath, jobId, listingId, user.id, String(durationSeconds), style], {
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    child.stdout?.on("data", (d: Buffer) => process.stdout.write(`[pipeline] ${d}`));
-    child.stderr?.on("data", (d: Buffer) => process.stderr.write(`[pipeline:err] ${d}`));
-    child.unref();
-  } else {
-    // Production: enqueue to BullMQ worker
-    const { enqueueVideoJob } = await import("@/workers/queue");
-    await enqueueVideoJob({ jobId, listingId, userId: user.id, style, durationSeconds, formats, musicTrackId, includeNeighborhoodBroll });
-  }
-
-  return NextResponse.json({ jobId, estimatedSeconds: isDevMode() ? 60 : 120 });
+  return NextResponse.json({ jobId });
 }

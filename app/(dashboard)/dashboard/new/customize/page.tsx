@@ -4,13 +4,15 @@ import { useState, useEffect, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
-import { ArrowRight, Play, Clock, Smartphone, Monitor, ArrowLeft, Loader2 } from "lucide-react";
+import { ArrowRight, Play, Clock, ArrowLeft, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import type { MusicTrack, VideoStyle, VideoFormat, BrandKit } from "@/lib/types";
+import type { MusicTrack, VideoStyle, BrandKit } from "@/lib/types";
+
+// ── Constants ─────────────────────────────────────────────────────────────────
 
 const STYLES: { id: VideoStyle; label: string; description: string; emoji: string }[] = [
   { id: "modern", label: "Modern", description: "Clean, contemporary cuts", emoji: "🏙️" },
@@ -26,11 +28,25 @@ const DURATIONS = [
   { value: 60, label: "60s", description: "Full showcase" },
 ];
 
-const FORMATS: { id: VideoFormat; label: string; icon: React.ReactNode }[] = [
-  { id: "both", label: "Both formats", icon: <><Smartphone className="w-3 h-3" /><Monitor className="w-3 h-3" /></> },
-  { id: "16x9", label: "16:9 only", icon: <Monitor className="w-3 h-3" /> },
-  { id: "9x16", label: "9:16 only", icon: <Smartphone className="w-3 h-3" /> },
-];
+const HEADLINE_OPTIONS = [
+  "JUST LISTED",
+  "OPEN HOUSE",
+  "COMING SOON",
+  "PRICE REDUCED",
+  "JUST SOLD",
+  "BACK ON MARKET",
+  "NEW CONSTRUCTION",
+  "FOR RENT",
+  "Custom",
+] as const;
+
+const VIDEO_FORMATS = ["16:9", "9:16", "1:1", "4:5"] as const;
+type VideoFormatOption = (typeof VIDEO_FORMATS)[number];
+
+const GENRE_FILTERS = ["All", "Modern", "Luxury", "Upbeat", "Calm", "Bold"] as const;
+type GenreFilter = (typeof GENRE_FILTERS)[number];
+
+// ── Main Component ─────────────────────────────────────────────────────────────
 
 function CustomizeContent() {
   const router = useRouter();
@@ -38,15 +54,27 @@ function CustomizeContent() {
   const listingId = searchParams.get("listingId");
   const supabase = createClient();
 
+  // Existing state
   const [style, setStyle] = useState<VideoStyle>("modern");
   const [duration, setDuration] = useState(30);
-  const [format, setFormat] = useState<VideoFormat>("both");
   const [selectedTrackId, setSelectedTrackId] = useState<string | null>(null);
   const [includeBroll, setIncludeBroll] = useState(true);
   const [tracks, setTracks] = useState<MusicTrack[]>([]);
   const [brandKit, setBrandKit] = useState<BrandKit | null>(null);
   const [generating, setGenerating] = useState(false);
   const [loading, setLoading] = useState(true);
+
+  // LOS-032: Headline state
+  const [headline, setHeadline] = useState<string>("JUST LISTED");
+  const [customHeadline, setCustomHeadline] = useState<string>("");
+
+  // LOS-033: Format + Version state (default: 16:9 + 9:16 checked, Branded checked)
+  const [selectedFormats, setSelectedFormats] = useState<VideoFormatOption[]>(["16:9", "9:16"]);
+  const [includeClean, setIncludeClean] = useState(false);
+
+  // LOS-034: Music genre filter + volume
+  const [genreFilter, setGenreFilter] = useState<GenreFilter>("All");
+  const [musicVolume, setMusicVolume] = useState(50);
 
   useEffect(() => {
     if (!listingId) { router.push("/dashboard/new"); return; }
@@ -57,7 +85,7 @@ function CustomizeContent() {
         fetch("/api/brand"),
       ]);
       const { data: trackData } = tracksRes;
-      const { brandKit: kit } = await brandRes.json();
+      const { brandKit: kit } = await brandRes.json() as { brandKit: BrandKit | null };
 
       const loaded = (trackData as MusicTrack[]) || [];
       setTracks(loaded);
@@ -68,10 +96,27 @@ function CustomizeContent() {
     load();
   }, [listingId, router, supabase]);
 
+  // Derived: filtered tracks by genre
+  const filteredTracks = genreFilter === "All"
+    ? tracks
+    : tracks.filter((t) => t.genre.toLowerCase() === genreFilter.toLowerCase());
+
+  // LOS-033: disable generate if no format or no version selected
+  const noFormatSelected = selectedFormats.length === 0;
+  const generateDisabled = generating || !selectedTrackId || noFormatSelected;
+
+  // Format toggle helper
+  function toggleFormat(fmt: VideoFormatOption) {
+    setSelectedFormats((prev) =>
+      prev.includes(fmt) ? prev.filter((f) => f !== fmt) : [...prev, fmt]
+    );
+  }
+
   async function handleGenerate() {
     if (!listingId || !selectedTrackId) return;
     setGenerating(true);
     try {
+      const effectiveHeadline = headline === "Custom" ? customHeadline : headline;
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -79,19 +124,23 @@ function CustomizeContent() {
           listingId,
           style,
           durationSeconds: duration,
-          formats: format,
+          formats: selectedFormats,
+          includeClean,
           musicTrackId: selectedTrackId,
           includeNeighborhoodBroll: includeBroll,
+          headline: effectiveHeadline,
+          customHeadline,
+          musicVolume,
         }),
       });
-      const data = await res.json();
+      const data = await res.json() as { jobId?: string; error?: string };
       if (!res.ok) {
         if (res.status === 402) {
           toast.error("No credits remaining. Upgrade your plan.");
           router.push("/dashboard/account");
           return;
         }
-        throw new Error(data.error || "Generation failed");
+        throw new Error(data.error ?? "Generation failed");
       }
       router.push(`/dashboard/new/generating?jobId=${data.jobId}&listingId=${listingId}`);
     } catch (err: unknown) {
@@ -100,11 +149,11 @@ function CustomizeContent() {
     }
   }
 
-  const agentName = brandKit?.agent_name || "Agent Name";
-  const brokerageName = brandKit?.brokerage || "Brokerage";
-  const primaryColor = brandKit?.primary_color || "#1A2E4A";
-  const accentColor = brandKit?.accent_color || "#F5A623";
-  const fontFamily = brandKit?.font || "Inter";
+  const agentName = brandKit?.agent_name ?? "Agent Name";
+  const brokerageName = brandKit?.brokerage ?? "Brokerage";
+  const primaryColor = brandKit?.primary_color ?? "#1A2E4A";
+  const accentColor = brandKit?.accent_color ?? "#F5A623";
+  const fontFamily = brandKit?.font ?? "Inter";
 
   if (loading) {
     return (
@@ -141,6 +190,40 @@ function CustomizeContent() {
             <h1 className="text-2xl font-bold mb-1">Customize your video</h1>
             <p className="text-muted-foreground text-sm">Choose a style, duration, and music for your listing video.</p>
           </div>
+
+          {/* ── LOS-032: Headline Picker ── */}
+          <div>
+            <h3 className="font-semibold mb-3">Headline</h3>
+            <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+              {HEADLINE_OPTIONS.map((option) => (
+                <button
+                  key={option}
+                  onClick={() => setHeadline(option)}
+                  className={`p-2.5 rounded-xl border-2 text-center text-xs font-medium transition-all ${
+                    headline === option
+                      ? "border-primary bg-primary/5 text-primary"
+                      : "border-border hover:border-primary/40"
+                  }`}
+                >
+                  {option}
+                </button>
+              ))}
+            </div>
+            {headline === "Custom" && (
+              <div className="mt-3">
+                <Input
+                  placeholder="Enter custom headline…"
+                  value={customHeadline}
+                  onChange={(e) => setCustomHeadline(e.target.value)}
+                  maxLength={60}
+                  className="text-sm"
+                />
+                <p className="text-xs text-muted-foreground mt-1">{customHeadline.length}/60 characters</p>
+              </div>
+            )}
+          </div>
+
+          <Separator />
 
           {/* Style picker */}
           <div>
@@ -192,55 +275,186 @@ function CustomizeContent() {
 
           <Separator />
 
-          {/* Format */}
+          {/* ── LOS-033: Output Format Selector ── */}
           <div>
-            <h3 className="font-semibold mb-3">Format</h3>
-            <div className="flex gap-3">
-              {FORMATS.map((f) => (
-                <button
-                  key={f.id}
-                  onClick={() => setFormat(f.id)}
-                  className={`flex-1 p-3 rounded-xl border-2 text-center transition-all ${
-                    format === f.id
-                      ? "border-primary bg-primary/5"
-                      : "border-border hover:border-primary/40"
-                  }`}
-                >
-                  <div className="flex items-center justify-center gap-1 mb-1">{f.icon}</div>
-                  <p className="text-sm">{f.label}</p>
-                </button>
-              ))}
+            <h3 className="font-semibold mb-3">Output Format</h3>
+            <div className="grid grid-cols-2 gap-6">
+              {/* Format checkboxes */}
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Format</p>
+                <div className="space-y-2">
+                  {VIDEO_FORMATS.map((fmt) => {
+                    const checked = selectedFormats.includes(fmt);
+                    return (
+                      <label
+                        key={fmt}
+                        className="flex items-center gap-2.5 cursor-pointer select-none"
+                      >
+                        {/* Custom checkbox using Tailwind */}
+                        <button
+                          type="button"
+                          role="checkbox"
+                          aria-checked={checked}
+                          onClick={() => toggleFormat(fmt)}
+                          className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                            checked
+                              ? "bg-primary border-primary"
+                              : "border-border hover:border-primary/60"
+                          }`}
+                        >
+                          {checked && (
+                            <svg
+                              className="w-2.5 h-2.5 text-primary-foreground"
+                              fill="none"
+                              viewBox="0 0 10 10"
+                              stroke="currentColor"
+                              strokeWidth={2}
+                            >
+                              <path d="M1.5 5l2.5 2.5 4.5-4.5" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          )}
+                        </button>
+                        <span className="text-sm font-medium">{fmt}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+                {noFormatSelected && (
+                  <p className="text-xs text-destructive mt-1.5">Select at least one format.</p>
+                )}
+              </div>
+
+              {/* Version checkboxes */}
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Version</p>
+                <div className="space-y-2">
+                  {/* Branded — always on (can be toggled off only if clean is on) */}
+                  <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                    <button
+                      type="button"
+                      role="checkbox"
+                      aria-checked={true}
+                      disabled
+                      className="w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 bg-primary border-primary opacity-70 cursor-not-allowed"
+                    >
+                      <svg
+                        className="w-2.5 h-2.5 text-primary-foreground"
+                        fill="none"
+                        viewBox="0 0 10 10"
+                        stroke="currentColor"
+                        strokeWidth={2}
+                      >
+                        <path d="M1.5 5l2.5 2.5 4.5-4.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+                    <span className="text-sm font-medium">Branded</span>
+                    <span className="text-xs text-muted-foreground">(with overlays)</span>
+                  </label>
+
+                  {/* Clean */}
+                  <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                    <button
+                      type="button"
+                      role="checkbox"
+                      aria-checked={includeClean}
+                      onClick={() => setIncludeClean((v) => !v)}
+                      className={`w-4 h-4 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                        includeClean
+                          ? "bg-primary border-primary"
+                          : "border-border hover:border-primary/60"
+                      }`}
+                    >
+                      {includeClean && (
+                        <svg
+                          className="w-2.5 h-2.5 text-primary-foreground"
+                          fill="none"
+                          viewBox="0 0 10 10"
+                          stroke="currentColor"
+                          strokeWidth={2}
+                        >
+                          <path d="M1.5 5l2.5 2.5 4.5-4.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      )}
+                    </button>
+                    <span className="text-sm font-medium">Clean</span>
+                    <span className="text-xs text-muted-foreground">(MLS-safe, no branding)</span>
+                  </label>
+                </div>
+              </div>
             </div>
           </div>
 
           <Separator />
 
-          {/* Music */}
+          {/* ── LOS-034: Music with genre filter + BPM + volume ── */}
           <div>
             <h3 className="font-semibold mb-3">Music</h3>
-            <div className="grid grid-cols-2 gap-2 max-h-52 overflow-y-auto pr-1">
-              {tracks.map((track) => (
+
+            {/* Genre filter tabs */}
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {GENRE_FILTERS.map((g) => (
                 <button
-                  key={track.id}
-                  onClick={() => setSelectedTrackId(track.id)}
-                  className={`p-3 rounded-xl border-2 text-left transition-all ${
-                    selectedTrackId === track.id
-                      ? "border-primary bg-primary/5"
-                      : "border-border hover:border-primary/40"
+                  key={g}
+                  onClick={() => setGenreFilter(g)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium border transition-all ${
+                    genreFilter === g
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"
                   }`}
                 >
-                  <div className="flex items-center justify-between">
-                    <p className="text-sm font-medium truncate">{track.name}</p>
-                    {selectedTrackId === track.id && (
-                      <Play className="w-3 h-3 text-primary shrink-0 ml-1" />
-                    )}
-                  </div>
-                  <div className="flex gap-1 mt-1">
-                    <Badge variant="secondary" className="text-xs capitalize">{track.genre}</Badge>
-                    {track.bpm && <span className="text-xs text-muted-foreground">{track.bpm}bpm</span>}
-                  </div>
+                  {g}
                 </button>
               ))}
+            </div>
+
+            {/* Track list */}
+            {filteredTracks.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">No tracks in this genre.</p>
+            ) : (
+              <div className="grid grid-cols-2 gap-2 max-h-52 overflow-y-auto pr-1">
+                {filteredTracks.map((track) => (
+                  <button
+                    key={track.id}
+                    onClick={() => setSelectedTrackId(track.id)}
+                    className={`p-3 rounded-xl border-2 text-left transition-all ${
+                      selectedTrackId === track.id
+                        ? "border-primary bg-primary/5"
+                        : "border-border hover:border-primary/40"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium truncate">{track.name}</p>
+                      {selectedTrackId === track.id && (
+                        <Play className="w-3 h-3 text-primary shrink-0 ml-1" />
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <Badge variant="secondary" className="text-xs capitalize">{track.genre}</Badge>
+                      {track.bpm !== null && (
+                        <span className="text-xs text-muted-foreground">{track.bpm} BPM</span>
+                      )}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Volume slider */}
+            <div className="mt-4">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-xs text-muted-foreground font-medium">Music Volume</span>
+                <span className="text-xs font-semibold tabular-nums">{musicVolume}%</span>
+              </div>
+              {/* Native range slider styled with Tailwind */}
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={musicVolume}
+                onChange={(e) => setMusicVolume(Number(e.target.value))}
+                className="w-full h-1.5 rounded-full appearance-none bg-muted cursor-pointer accent-primary"
+              />
             </div>
           </div>
 
@@ -274,7 +488,7 @@ function CustomizeContent() {
             </Button>
             <Button
               onClick={handleGenerate}
-              disabled={generating || !selectedTrackId}
+              disabled={generateDisabled}
               size="lg"
               className="flex-1"
             >
@@ -307,6 +521,29 @@ function CustomizeContent() {
                 }}
               >
                 <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent" />
+                {/* Headline badge in preview */}
+                {headline && headline !== "Custom" && (
+                  <div
+                    className="absolute top-3 left-2 right-2 flex justify-center"
+                  >
+                    <span
+                      className="text-[5px] font-bold px-1.5 py-0.5 rounded"
+                      style={{ backgroundColor: accentColor, color: "#fff" }}
+                    >
+                      {headline}
+                    </span>
+                  </div>
+                )}
+                {headline === "Custom" && customHeadline && (
+                  <div className="absolute top-3 left-2 right-2 flex justify-center">
+                    <span
+                      className="text-[5px] font-bold px-1.5 py-0.5 rounded truncate max-w-full"
+                      style={{ backgroundColor: accentColor, color: "#fff" }}
+                    >
+                      {customHeadline}
+                    </span>
+                  </div>
+                )}
                 <div
                   className="relative px-2 py-1.5"
                   style={{ backgroundColor: `${primaryColor}dd` }}
@@ -363,6 +600,12 @@ function CustomizeContent() {
           {/* Summary */}
           <div className="bg-muted/50 rounded-xl p-3 space-y-1.5 text-xs">
             <div className="flex justify-between">
+              <span className="text-muted-foreground">Headline</span>
+              <span className="font-medium truncate max-w-[100px] text-right">
+                {headline === "Custom" ? (customHeadline || "—") : headline}
+              </span>
+            </div>
+            <div className="flex justify-between">
               <span className="text-muted-foreground">Style</span>
               <span className="capitalize font-medium">{style}</span>
             </div>
@@ -371,8 +614,16 @@ function CustomizeContent() {
               <span className="font-medium">{duration}s</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Format</span>
-              <span className="font-medium">{format === "both" ? "16:9 + 9:16" : format}</span>
+              <span className="text-muted-foreground">Formats</span>
+              <span className="font-medium">{selectedFormats.length > 0 ? selectedFormats.join(" + ") : "None"}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Version</span>
+              <span className="font-medium">{includeClean ? "Branded + Clean" : "Branded"}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Volume</span>
+              <span className="font-medium">{musicVolume}%</span>
             </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">B-roll</span>

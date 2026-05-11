@@ -60,15 +60,6 @@ function calcPhotoTiming(totalPhotos, targetDuration) {
   return { photoCount: 1, clipDuration: targetDuration - FIXED };
 }
 
-// Standard room type labels for listing photo sequences
-// Real estate photos are always ordered: exterior first, interior middle, yard last
-const ROOM_LABELS = [
-  "Exterior", "Entry", "Living Room", "Kitchen", "Dining Room",
-  "Primary Bedroom", "Primary Bath", "Bedroom", "Bedroom", "Bathroom",
-  "Office / Den", "Laundry", "Garage", "Backyard", "Deck / Patio",
-  "Pool Area", "Yard", "View", "Neighborhood",
-];
-
 // ─── Parallax motion presets (used by parallax-cpu.py) ───────────────────────
 // Each position in the photo sequence gets a distinct camera move.
 // reverse: true = plays motion backwards (e.g. zoom-out instead of zoom-in)
@@ -83,16 +74,6 @@ const PARALLAX_PRESETS = [
   { motion: "dolly",      intensity: 1.2, reverse: true  }, // pull back
   { motion: "vertical",   intensity: 1.0, reverse: false }, // rise up
   { motion: "orbital",    intensity: 1.2, reverse: true  }, // reverse orbit
-];
-
-// ─── Ken Burns Patterns (fallback if Python/ONNX unavailable) ─────────────────
-const KB_PATTERNS = [
-  { z: "min(zoom+0.0015,1.5)", x: "iw/2-(iw/zoom/2)", y: "ih/2-(ih/zoom/2)" },
-  { z: "min(zoom+0.0015,1.4)", x: "0", y: "0" },
-  { z: "min(zoom+0.0015,1.4)", x: "iw/zoom*0.5", y: "0" },
-  { z: "min(zoom+0.0008,1.2)", x: "if(eq(on,1),0,min(x+(iw/zoom*0.004),iw-(iw/zoom)))", y: "ih/2-(ih/zoom/2)" },
-  { z: "min(zoom+0.0008,1.2)", x: "if(eq(on,1),iw-(iw/zoom),max(x-(iw/zoom*0.004),0))", y: "ih/2-(ih/zoom/2)" },
-  { z: "if(eq(on,1),1.4,max(zoom-0.0015,1.001))", x: "iw/2-(iw/zoom/2)", y: "ih/2-(ih/zoom/2)" },
 ];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -162,66 +143,35 @@ async function preprocessPhoto(inputPath, outputPath) {
   }
 }
 
-// ─── M1: Bake room label into photo using Sharp (drawtext not in ffmpeg-static) ─
-async function addRoomLabelToPhoto(inputPath, outputPath, roomLabel) {
-  const sharp = require("sharp");
-  const text = roomLabel || "";
-  // Approximate pill width based on character count
-  const pillW = Math.min(text.length * 15 + 48, 320);
-  // Place pill in top-right of 9:16 safe zone (max x=1263): right edge = 1240
-  const pillX = 1240 - pillW;
-  const pillY = 28;
-  const pillH = 52;
-
-  const svg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
-    <rect x="${pillX}" y="${pillY}" width="${pillW}" height="${pillH}" rx="8" fill="rgba(0,0,0,0.65)"/>
-    <text x="${pillX + pillW / 2}" y="${pillY + 35}" font-family="Arial, Helvetica, sans-serif"
-          font-size="24" font-weight="600" fill="white" text-anchor="middle">${escapeXml(text)}</text>
-  </svg>`;
-
-  await sharp(inputPath)
-    .composite([{ input: Buffer.from(svg), blend: "over" }])
-    .jpeg({ quality: 95, mozjpeg: true })
-    .toFile(outputPath);
-  return outputPath;
-}
-
 // ─── M1: 2.5D Parallax clip via Depth Anything V2 ONNX (primary) ─────────────
-function generateParallaxClip(imagePath, outputPath, duration, presetIndex) {
+function generateParallaxClip(imagePath, outputPath, duration, presetIndex, customPreset) {
   const { execSync } = require("child_process");
-  const preset = PARALLAX_PRESETS[presetIndex % PARALLAX_PRESETS.length];
+  const preset = customPreset || PARALLAX_PRESETS[presetIndex % PARALLAX_PRESETS.length];
   const pythonScript = path.join(__dirname, "parallax-cpu.py");
-  const python3 = process.env.PYTHON3_PATH || "python3";
+  // On Apple Silicon where Node runs under Rosetta (x86_64), python3 would
+  // spawn as x86_64 but arm64 numpy/cv2 are installed — force arm64 slice.
+  const python3 = process.env.PYTHON3_PATH ||
+    (process.platform === "darwin" && process.arch === "x64"
+      ? "arch -arm64 python3"
+      : "python3");
 
   return new Promise((resolve, reject) => {
     if (!require("fs").existsSync(pythonScript)) {
-      return reject(new Error("parallax-cpu.py not found — falling back"));
+      return reject(new Error("parallax-cpu.py not found"));
     }
-    const cmd = `${python3} "${pythonScript}" "${imagePath}" "${outputPath}" ${preset.motion} ${preset.intensity} ${duration} ${preset.reverse}`;
+    const rawOutput = outputPath.replace(".mp4", "-raw.mp4");
+    const cmd = `${python3} "${pythonScript}" "${imagePath}" "${rawOutput}" ${preset.motion} ${preset.intensity} ${duration} ${preset.reverse}`;
     try {
-      execSync(cmd, { stdio: "pipe", timeout: 60000 });
-      resolve();
+      execSync(cmd, { stdio: "pipe", timeout: 90000 });
+      // Re-encode mpeg4 → H.264 for xfade compatibility
+      ffrun(ffmpegLib(rawOutput)
+        .outputOptions(["-c:v libx264", "-preset fast", "-crf 18", "-pix_fmt yuv420p", "-r 30", "-an", "-movflags +faststart"])
+        .output(outputPath)
+      ).then(() => { require("fs").unlink(rawOutput, () => {}); resolve(); }).catch(reject);
     } catch (e) {
       reject(new Error(`parallax-cpu.py failed: ${e.stderr?.toString()?.slice(0, 200) || e.message}`));
     }
   });
-}
-
-// ─── M1: Ken Burns clip (1920×1080) — fallback when Python unavailable ────────
-function createKenBurnsClip(imagePath, outputPath, duration, patternIndex) {
-  const p = KB_PATTERNS[patternIndex % KB_PATTERNS.length];
-  const fps = 25;
-  const frames = duration * fps;
-
-  const videoFilter = `scale=8000:-1,zoompan=z='${p.z}':d=${frames}:x='${p.x}':y='${p.y}':s=${W}x${H}:fps=${fps}`;
-
-  return ffrun(
-    ffmpegLib(imagePath)
-      .inputOptions([`-loop 1`, `-t ${duration + 0.5}`])
-      .videoFilter(videoFilter)
-      .outputOptions(["-c:v libx264", "-preset fast", "-crf 18", "-pix_fmt yuv420p", "-an", `-t ${duration}`])
-      .output(outputPath)
-  );
 }
 
 // ─── M1: xfade concat (accepts per-clip durations array) ─────────────────────
@@ -323,7 +273,7 @@ function loopCardToVideo(imagePath, duration, outputPath) {
   return ffrun(
     ffmpegLib(imagePath)
       .inputOptions(["-loop 1", `-t ${duration}`])
-      .outputOptions(["-c:v libx264", "-preset fast", "-crf 18", "-pix_fmt yuv420p", "-an", `-t ${duration}`])
+      .outputOptions(["-c:v libx264", "-preset fast", "-crf 18", "-pix_fmt yuv420p", "-r 30", "-an", `-t ${duration}`])
       .output(outputPath)
   );
 }
@@ -619,6 +569,26 @@ function cropTo9x16(inputPath, outputPath) {
   );
 }
 
+// ─── Crop to 1:1 ─────────────────────────────────────────────────────────────
+function cropTo1x1(inputPath, outputPath) {
+  return ffrun(
+    ffmpegLib(inputPath)
+      .videoFilter("crop=ih:ih:(iw-ih)/2:0,scale=1080:1080")
+      .outputOptions(["-c:v libx264", "-preset fast", "-crf 18", "-pix_fmt yuv420p", "-c:a copy", "-movflags +faststart"])
+      .output(outputPath)
+  );
+}
+
+// ─── Crop to 4:5 ─────────────────────────────────────────────────────────────
+function cropTo4x5(inputPath, outputPath) {
+  return ffrun(
+    ffmpegLib(inputPath)
+      .videoFilter("crop=iw:iw*5/4:(iw-iw)/2:(ih-iw*5/4)/2,scale=1080:1350")
+      .outputOptions(["-c:v libx264", "-preset fast", "-crf 18", "-pix_fmt yuv420p", "-c:a copy", "-movflags +faststart"])
+      .output(outputPath)
+  );
+}
+
 // ─── Extract thumbnail ────────────────────────────────────────────────────────
 function extractThumbnail(videoPath, outputPath) {
   return new Promise((resolve, reject) => {
@@ -632,6 +602,44 @@ function extractThumbnail(videoPath, outputPath) {
       .on("end", () => resolve())
       .on("error", reject);
   });
+}
+
+// ─── Extract 5 thumbnails at evenly spaced intervals (LOS-052) ───────────────
+async function extractMultipleThumbnails(videoPath, tmpDir, durationSecs) {
+  const thumbPaths = [];
+  const intervals = [0.1, 0.28, 0.5, 0.72, 0.9];
+  for (let i = 0; i < intervals.length; i++) {
+    const ts = Math.round(durationSecs * intervals[i]);
+    const outPath = path.join(tmpDir, `thumb-${i}.jpg`);
+    try {
+      await new Promise((resolve, reject) => {
+        ffmpegLib(videoPath)
+          .screenshots({ timestamps: [String(ts)], filename: `thumb-${i}.jpg`, folder: tmpDir, size: "960x540" })
+          .on("end", () => resolve())
+          .on("error", reject);
+      });
+      thumbPaths.push(outPath);
+    } catch (e) {
+      console.warn(`[pipeline] thumbnail ${i} failed:`, e.message);
+    }
+  }
+  return thumbPaths;
+}
+
+// ─── Generate GIF preview (LOS-053) ──────────────────────────────────────────
+function generateGif(videoPath, outputPath, durationSecs) {
+  const startTime = Math.round(durationSecs * 0.1);
+  const gifDuration = Math.min(3, durationSecs - startTime);
+  return ffrun(
+    ffmpegLib(videoPath)
+      .setStartTime(startTime)
+      .duration(gifDuration)
+      .outputOptions([
+        "-vf", "fps=12,scale=480:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse",
+        "-loop", "0",
+      ])
+      .output(outputPath)
+  );
 }
 
 // ─── Watermark auto-generate ─────────────────────────────────────────────────
@@ -654,6 +662,53 @@ async function ensureWatermarkPng(publicDir) {
     console.warn("[pipeline] Could not generate watermark:", e.message);
     return null;
   }
+}
+
+// ─── Cinema post-processing: film grain + warm grade + vignette ───────────────
+function applyCinemaGrade(inputPath, outputPath) {
+  return ffrun(
+    ffmpegLib(inputPath)
+      .complexFilter([
+        "[0:v]noise=alls=3:allf=t,eq=saturation=1.12:contrast=1.04:brightness=0.01,vignette=PI/5[vout]"
+      ])
+      .outputOptions([
+        "-map [vout]", "-map 0:a?",
+        "-c:v libx264", "-preset fast", "-crf 18", "-pix_fmt yuv420p",
+        "-c:a copy", "-movflags +faststart",
+      ])
+      .output(outputPath)
+  );
+}
+
+// ─── R2 upload with local fallback ────────────────────────────────────────────
+async function uploadOutput(filePath, r2Key, contentType) {
+  const r2KeyId = process.env.R2_ACCESS_KEY_ID || "";
+  if (!r2KeyId || r2KeyId.startsWith("placeholder")) {
+    // Dev fallback: copy to /public/videos/
+    const publicDir = path.join(__dirname, "../public", "videos", jobId);
+    fs.mkdirSync(publicDir, { recursive: true });
+    const dest = path.join(publicDir, path.basename(r2Key));
+    fs.copyFileSync(filePath, dest);
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    return `${appUrl}/videos/${jobId}/${path.basename(r2Key)}`;
+  }
+  const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+  const client = new S3Client({
+    region: "auto",
+    endpoint: `https://${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`,
+    credentials: {
+      accessKeyId: process.env.R2_ACCESS_KEY_ID,
+      secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+    },
+  });
+  await client.send(new PutObjectCommand({
+    Bucket: process.env.R2_BUCKET_NAME,
+    Key: r2Key,
+    Body: fs.readFileSync(filePath),
+    ContentType: contentType,
+  }));
+  const r2PublicUrl = process.env.R2_PUBLIC_URL || `https://${process.env.R2_BUCKET_NAME}.${process.env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
+  return `${r2PublicUrl}/${r2Key}`;
 }
 
 // ─── Brand kit / helpers ──────────────────────────────────────────────────────
@@ -735,20 +790,38 @@ async function run() {
     for (let i = 0; i < photos.length; i++) {
       const rawPath = path.join(tmpDir, `raw-${i}.jpg`);
       const processedPath = path.join(tmpDir, `photo-${i}.jpg`);
+      const enhancedPath = path.join(tmpDir, `enhanced-${i}.jpg`);
       const clipPath = path.join(tmpDir, `clip-${i}.mp4`);
+      const photo = photos[i];
       try {
-        await downloadFile(photos[i].url, rawPath);
+        await downloadFile(photo.url, rawPath);
         const preprocessedPath = await preprocessPhoto(rawPath, processedPath);
 
-        // Try 2.5D parallax (depth-based) first; fall back to Ken Burns
-        try {
-          await generateParallaxClip(preprocessedPath, clipPath, CLIP_DURATION, i);
-          console.log(`[pipeline] Clip ${i} done (parallax: ${PARALLAX_PRESETS[i % PARALLAX_PRESETS.length].motion})`);
-        } catch (pErr) {
-          console.warn(`[pipeline] Parallax failed for clip ${i}, using Ken Burns: ${pErr.message}`);
-          await createKenBurnsClip(preprocessedPath, clipPath, CLIP_DURATION, i);
-          console.log(`[pipeline] Clip ${i} done (ken-burns fallback, pattern ${i % KB_PATTERNS.length})`);
+        // Per-photo enhancements (LOS-038): apply sky replace or day-to-dusk if flagged
+        let finalPhotoPath = preprocessedPath;
+        if (photo.dayToDusk) {
+          try {
+            const python = process.platform === "win32" ? "python" : "python3";
+            const duskScript = path.join(__dirname, "day-to-dusk.py");
+            if (fs.existsSync(duskScript)) {
+              require("child_process").execSync(`${python} "${duskScript}" "${preprocessedPath}" "${enhancedPath}"`, { timeout: 30000 });
+              if (fs.existsSync(enhancedPath)) { finalPhotoPath = enhancedPath; console.log(`[pipeline] Photo ${i}: day-to-dusk applied`); }
+            }
+          } catch (e) { console.warn(`[pipeline] Photo ${i}: day-to-dusk failed (using original):`, e.message); }
+        } else if (photo.skySrc) {
+          try {
+            const python = process.platform === "win32" ? "python" : "python3";
+            const skyScript = path.join(__dirname, "sky-replace.py");
+            if (fs.existsSync(skyScript)) {
+              require("child_process").execSync(`${python} "${skyScript}" "${preprocessedPath}" "${enhancedPath}" "${photo.skySrc}"`, { timeout: 30000 });
+              if (fs.existsSync(enhancedPath)) { finalPhotoPath = enhancedPath; console.log(`[pipeline] Photo ${i}: sky replaced (${photo.skySrc})`); }
+            }
+          } catch (e) { console.warn(`[pipeline] Photo ${i}: sky-replace failed (using original):`, e.message); }
         }
+
+        const preset = photo.camera ? { motion: photo.camera, intensity: photo.intensity || 1.0 } : PARALLAX_PRESETS[i % PARALLAX_PRESETS.length];
+        await generateParallaxClip(finalPhotoPath, clipPath, photo.clipDuration || CLIP_DURATION, i, preset);
+        console.log(`[pipeline] Clip ${i} done (${preset.motion})`);
 
         clipPaths.push(clipPath);
       } catch (e) {
@@ -859,28 +932,63 @@ async function run() {
       console.log("[pipeline] No music track found");
     }
 
+    // Step 9b: Cinema post-processing (film grain + warm grade + vignette)
+    const gradedPath = path.join(tmpDir, "final-graded.mp4");
+    try {
+      await applyCinemaGrade(finalPath, gradedPath);
+      finalPath = gradedPath;
+      console.log("[pipeline] Cinema grade applied (grain + warm + vignette)");
+    } catch (e) {
+      console.warn("[pipeline] Cinema grade failed, using ungraded:", e.message);
+    }
+
     // Step 10: Crop 9:16
     await updateProgress("Creating your 9:16 version", 93);
     const output9x16 = path.join(tmpDir, "9x16.mp4");
     await cropTo9x16(finalPath, output9x16);
     console.log("[pipeline] 9:16 version created");
 
-    // Step 11: Thumbnail
+    // Step 10b: Additional format crops (1:1, 4:5)
+    const output1x1 = path.join(tmpDir, "1x1.mp4");
+    const output4x5 = path.join(tmpDir, "4x5.mp4");
+    await cropTo1x1(finalPath, output1x1).catch((e) => console.warn("[pipeline] 1:1 crop failed:", e.message));
+    await cropTo4x5(finalPath, output4x5).catch((e) => console.warn("[pipeline] 4:5 crop failed:", e.message));
+    console.log("[pipeline] Extra formats (1:1, 4:5) created");
+
+    // Step 11: Thumbnails (primary + 5-frame selector)
     const thumbPath = path.join(tmpDir, "thumb.jpg");
     await extractThumbnail(finalPath, thumbPath).catch((e) => console.warn("[pipeline] Thumbnail failed:", e.message));
+    const extraThumbs = await extractMultipleThumbnails(finalPath, tmpDir, totalVideoDuration).catch(() => []);
+    console.log(`[pipeline] Extracted ${extraThumbs.length} selector thumbnails`);
 
-    // Step 12: Copy to /public/videos/
+    // Step 11b: GIF preview (3s, 480px, 12fps)
+    const gifPath = path.join(tmpDir, "preview.gif");
+    await generateGif(finalPath, gifPath, totalVideoDuration).catch((e) => console.warn("[pipeline] GIF failed:", e.message));
+
+    // Step 12: Upload to R2 (or local fallback in dev)
     await updateProgress("Uploading final video", 95);
-    const publicDir = path.join(publicRoot, "videos", jobId);
-    fs.mkdirSync(publicDir, { recursive: true });
-    fs.copyFileSync(finalPath, path.join(publicDir, "16x9.mp4"));
-    fs.copyFileSync(output9x16, path.join(publicDir, "9x16.mp4"));
-    if (fs.existsSync(thumbPath)) fs.copyFileSync(thumbPath, path.join(publicDir, "thumb.jpg"));
+    const [url16x9, url9x16, thumbnailUrl] = await Promise.all([
+      uploadOutput(finalPath, `${jobId}/16x9.mp4`, "video/mp4"),
+      uploadOutput(output9x16, `${jobId}/9x16.mp4`, "video/mp4"),
+      fs.existsSync(thumbPath)
+        ? uploadOutput(thumbPath, `${jobId}/thumb.jpg`, "image/jpeg")
+        : Promise.resolve(""),
+    ]);
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:4000";
-    const url16x9 = `${appUrl}/videos/${jobId}/16x9.mp4`;
-    const url9x16 = `${appUrl}/videos/${jobId}/9x16.mp4`;
-    const thumbnailUrl = fs.existsSync(thumbPath) ? `${appUrl}/videos/${jobId}/thumb.jpg` : "";
+    // Upload extra formats
+    const [url1x1, url4x5, urlGif] = await Promise.all([
+      fs.existsSync(output1x1) ? uploadOutput(output1x1, `${jobId}/1x1.mp4`, "video/mp4") : Promise.resolve(""),
+      fs.existsSync(output4x5) ? uploadOutput(output4x5, `${jobId}/4x5.mp4`, "video/mp4") : Promise.resolve(""),
+      fs.existsSync(gifPath) ? uploadOutput(gifPath, `${jobId}/preview.gif`, "image/gif") : Promise.resolve(""),
+    ]);
+
+    // Upload selector thumbnails
+    const thumbUrls = await Promise.all(
+      extraThumbs.map((tp, i) =>
+        fs.existsSync(tp) ? uploadOutput(tp, `${jobId}/thumb-${i}.jpg`, "image/jpeg") : Promise.resolve("")
+      )
+    );
+    const selectorThumbs = thumbUrls.filter(Boolean);
 
     // Step 13: Generate content descriptions
     const { descriptions, captions } = await generateMockContent(listing);
@@ -892,6 +1000,10 @@ async function run() {
       user_id: userId,
       url_16x9: url16x9,
       url_9x16: url9x16,
+      url_1x1: url1x1 || null,
+      url_4x5: url4x5 || null,
+      gif_url: urlGif || null,
+      selector_thumbnails: selectorThumbs.length > 0 ? selectorThumbs : null,
       thumbnail_url: thumbnailUrl,
       duration_seconds: Math.round(totalVideoDuration),
       is_watermarked: needsWatermark,
@@ -914,6 +1026,17 @@ async function run() {
       progress_step: "Done!",
       progress_percent: 100,
     }).eq("id", jobId);
+
+    // Step 16b: Trigger content pack generation (non-blocking — never delays video)
+    const appUrl2 = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    fetch(`${appUrl2}/api/content/pack`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-service-key": process.env.SUPABASE_SERVICE_ROLE_KEY || "",
+      },
+      body: JSON.stringify({ listingId }),
+    }).catch((e) => console.warn("[pipeline] Content pack trigger failed:", e.message));
 
     console.log("[pipeline] DONE", jobId, "—", url16x9);
   } catch (err) {

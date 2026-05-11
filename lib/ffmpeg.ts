@@ -8,6 +8,7 @@ if (ffmpegStatic) {
   ffmpeg.setFfmpegPath(ffmpegStatic);
 }
 
+
 export interface AssembleOptions {
   clipPaths: string[];
   musicPath: string;
@@ -140,21 +141,3 @@ export async function extractThumbnail(videoPath: string, outputPath: string): P
   });
 }
 
-export async function createKenBurnsClip(
-  imagePath: string,
-  outputPath: string,
-  durationSeconds: number
-): Promise<void> {
-  return new Promise((resolve, reject) => {
-    ffmpeg(imagePath)
-      .inputOptions([`-loop 1`, `-t ${durationSeconds}`])
-      .videoFilter(
-        `scale=8000:-1,zoompan=z='min(zoom+0.001,1.3)':d=${durationSeconds * 25}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1280x720`
-      )
-      .outputOptions(["-c:v libx264", "-preset fast", "-crf 23", "-an", `-t ${durationSeconds}`])
-      .output(outputPath)
-      .on("end", () => resolve())
-      .on("error", reject)
-      .run();
-  });
-}

@@ -113,9 +113,12 @@ export async function POST(request: NextRequest) {
 
     // Download + store photos (non-fatal if it fails)
     let photos: { url: string; order: number; is_cover: boolean }[] = [];
+    let photoWarnings: { photoIndex: number; warning: string }[] = [];
     if (scraped.photoUrls && scraped.photoUrls.length > 0) {
       try {
-        photos = await downloadAndStorePhotos(scraped.photoUrls, user.id, listingId);
+        const result = await downloadAndStorePhotos(scraped.photoUrls, user.id, listingId);
+        photos = result.photos;
+        photoWarnings = result.warnings;
         if (photos.length > 0) {
           await adminSupabase.from("listings").update({ photos }).eq("id", listingId);
         }
@@ -135,6 +138,7 @@ export async function POST(request: NextRequest) {
       sqft: scraped.sqft,
       description: scraped.description,
       photos,
+      warnings: photoWarnings,
       noPhotos: photos.length === 0,
     });
   } catch (err) {

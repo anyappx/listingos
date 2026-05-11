@@ -14,8 +14,9 @@ import { Separator } from "@/components/ui/separator";
 import {
   ArrowLeft, Download, Copy, Share2, ExternalLink, Eye, Users, Save, Loader2, Video
 } from "lucide-react";
-import type { Listing, Video as VideoType } from "@/lib/types";
+import type { Listing, Video as VideoType, ContentPack } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
+import { ContentPackView } from "@/components/dashboard/content-pack";
 
 function copyToClipboard(text: string, message = "Copied!") {
   navigator.clipboard.writeText(text).then(() => toast.success(message));
@@ -257,6 +258,17 @@ export default function ListingDetailPage({ params }: { params: Promise<{ id: st
                   </TabsContent>
                 ))}
               </Tabs>
+            </CardContent>
+          </Card>
+
+          {/* Content Pack */}
+          <Card>
+            <CardHeader><CardTitle className="text-base">Content Pack</CardTitle></CardHeader>
+            <CardContent>
+              <ContentPackView
+                listingId={listing.id}
+                initialPack={listing.content_pack as ContentPack | null}
+              />
             </CardContent>
           </Card>
         </div>

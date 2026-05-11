@@ -2,7 +2,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { buildDescriptionPrompt, type ListingDescriptionInput } from "@/prompts/listing-description";
 import { buildCaptionPrompt, type CaptionInput } from "@/prompts/captions";
 import { FAIR_HOUSING_PROMPT, quickFairHousingCheck } from "@/prompts/fair-housing";
-import type { ListingDescriptions, ListingCaptions, FairHousingResult } from "@/lib/types";
+import { buildContentPackPrompt, parseContentPack, type ContentPackInput } from "@/prompts/content-pack";
+import type { ListingDescriptions, ListingCaptions, FairHousingResult, ContentPack } from "@/lib/types";
 
 const MODEL = "claude-haiku-4-5";
 
@@ -157,4 +158,22 @@ export async function generateAllContent(
     generateCaptions(listing),
   ]);
   return { descriptions, captions };
+}
+
+export async function generateContentPack(input: ContentPackInput): Promise<ContentPack | null> {
+  if (!hasRealApiKey()) {
+    return null;
+  }
+
+  const client = getClient();
+  const prompt = buildContentPackPrompt(input);
+
+  const response = await client.messages.create({
+    model: MODEL,
+    max_tokens: 2000,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const text = response.content[0]?.type === "text" ? response.content[0].text : "";
+  return parseContentPack(text);
 }

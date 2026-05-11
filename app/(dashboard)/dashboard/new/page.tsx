@@ -19,9 +19,18 @@ import {
   GripVertical,
   ArrowRight,
   Loader2,
+  Sparkles,
 } from "lucide-react";
 import type { ListingPhoto } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
+
+const DEMO_PHOTOS: ListingPhoto[] = [
+  { url: "https://images.pexels.com/photos/1396122/pexels-photo-1396122.jpeg", order: 0, is_cover: true },
+  { url: "https://images.pexels.com/photos/1396132/pexels-photo-1396132.jpeg", order: 1, is_cover: false },
+  { url: "https://images.pexels.com/photos/2102587/pexels-photo-2102587.jpeg", order: 2, is_cover: false },
+  { url: "https://images.pexels.com/photos/1643384/pexels-photo-1643384.jpeg", order: 3, is_cover: false },
+  { url: "https://images.pexels.com/photos/271624/pexels-photo-271624.jpeg", order: 4, is_cover: false },
+];
 
 interface ListingData {
   listingId: string;
@@ -41,6 +50,7 @@ export default function NewListingPage() {
 
   const [url, setUrl] = useState("");
   const [scraping, setScraping] = useState(false);
+  const [isDemo, setIsDemo] = useState(false);
   const [listing, setListing] = useState<ListingData | null>(null);
   const [photos, setPhotos] = useState<ListingPhoto[]>([]);
   const [editAddress, setEditAddress] = useState("");
@@ -86,6 +96,31 @@ export default function NewListingPage() {
     } finally {
       setScraping(false);
     }
+  }
+
+  function handleDemoFill() {
+    const demoId = crypto.randomUUID();
+    setListing({
+      listingId: demoId,
+      address: "2847 Maple Grove Dr, Austin, TX 78701",
+      city: "Austin",
+      price: 745000,
+      beds: 4,
+      baths: 3,
+      sqft: 2340,
+      description:
+        "Stunning contemporary home with open floor plan, chef's kitchen with quartz countertops, hardwood floors throughout, and a private backyard oasis with covered patio. Master suite with spa bath and walk-in closet.",
+      photos: DEMO_PHOTOS,
+    });
+    setPhotos(DEMO_PHOTOS);
+    setIsDemo(true);
+    setEditAddress("2847 Maple Grove Dr, Austin, TX 78701");
+    setEditCity("Austin");
+    setEditPrice("745000");
+    setEditBeds("4");
+    setEditBaths("3");
+    setEditSqft("2340");
+    toast.success("Demo listing loaded — feel free to explore!");
   }
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
@@ -136,6 +171,22 @@ export default function NewListingPage() {
       return;
     }
 
+    // Demo mode: skip API call, pass data via query params
+    if (isDemo) {
+      const params = new URLSearchParams({
+        listingId: listing.listingId,
+        demo: "1",
+        address: editAddress,
+        city: editCity,
+        price: editPrice,
+        beds: editBeds,
+        baths: editBaths,
+        sqft: editSqft,
+      });
+      router.push(`/dashboard/new/customize?${params.toString()}`);
+      return;
+    }
+
     // Update listing with edits
     const res = await fetch(`/api/listings/${listing.listingId}`, {
       method: "PATCH",
@@ -178,7 +229,7 @@ export default function NewListingPage() {
       </p>
 
       {/* URL input */}
-      <form onSubmit={handleScrape} className="flex gap-3 mb-8">
+      <form onSubmit={handleScrape} className="flex gap-3 mb-3">
         <div className="relative flex-1">
           <Link2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
@@ -201,6 +252,22 @@ export default function NewListingPage() {
           )}
         </Button>
       </form>
+
+      {/* Demo listing shortcut */}
+      <div className="flex items-center gap-2 mb-8">
+        <span className="text-sm text-muted-foreground">No listing URL?</span>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={handleDemoFill}
+          disabled={scraping}
+          className="gap-1.5"
+        >
+          <Sparkles className="w-3.5 h-3.5" />
+          Try Demo Listing
+        </Button>
+      </div>
 
       {/* Loading skeleton */}
       {scraping && (

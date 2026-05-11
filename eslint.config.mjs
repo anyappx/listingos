@@ -17,8 +17,12 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
-    // Standalone CJS Node.js script — not bundled by Next.js/TypeScript
+    // Standalone CJS Node.js scripts — not bundled by Next.js/TypeScript
     "scripts/pipeline.js",
+    "scripts/worker-poll.js",
+    "scripts/batch-quality-test.js",
+    // Playwright test infrastructure — excluded from production build
+    "tests/**",
   ]),
 ]);
 

@@ -43,3 +43,8 @@ next-env.d.ts
 # Local dev video output
 public/videos/
 tmp/
+.env*.local
+
+# ONNX model files (auto-downloaded at runtime)
+scripts/models/*.onnx
+scripts/models/

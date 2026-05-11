@@ -47,12 +47,7 @@ export async function generateClip(
     videoUrl = await attemptGenerate();
   } catch {
     // Retry once
-    try {
-      videoUrl = await attemptGenerate();
-    } catch {
-      // Fallback: use Ken Burns FFmpeg effect on static image
-      return kenBurnsFallback(imageUrl, jobTmpDir, index);
-    }
+    videoUrl = await attemptGenerate();
   }
 
   // Download immediately (fal.ai URLs expire in 1 hour)
@@ -65,24 +60,6 @@ export async function generateClip(
   return { url: videoUrl, localPath };
 }
 
-async function kenBurnsFallback(
-  imageUrl: string,
-  jobTmpDir: string,
-  index: number
-): Promise<FalClipResult> {
-  const { createKenBurnsClip } = await import("@/lib/ffmpeg");
-
-  // Download the image first
-  const imgPath = path.join(jobTmpDir, `img-${index}.jpg`);
-  const res = await fetch(imageUrl);
-  if (!res.ok) throw new Error(`Failed to download image for fallback: ${res.status}`);
-  const buf = Buffer.from(await res.arrayBuffer());
-  fs.writeFileSync(imgPath, buf);
-
-  const outputPath = path.join(jobTmpDir, `clip-${index}.mp4`);
-  await createKenBurnsClip(imgPath, outputPath, 4);
-  return { url: "", localPath: outputPath };
-}
 
 export async function generateClipsParallel(
   imageUrls: string[],

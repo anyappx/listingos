@@ -2,7 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { getSignedVideoUrl } from "@/lib/r2";
 import { generateQRCode } from "@/lib/qr";
-import { isDevMode } from "@/lib/dev-pipeline";
+import { isDevMode } from "@/lib/utils";
 import type { JobStatusResponse } from "@/lib/types";
 
 export async function GET(

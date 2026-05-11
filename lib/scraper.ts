@@ -32,6 +32,7 @@ export interface ScrapedData {
   sqft: number | null;
   description: string;
   photoUrls: string[];
+  warnings?: { photoIndex: number; warning: string }[];
 }
 
 // ─── Playwright — uses system Chrome to bypass PerimeterX/bot detection ──────
@@ -453,9 +454,10 @@ export async function downloadAndStorePhotos(
   photoUrls: string[],
   userId: string,
   listingId: string
-): Promise<{ url: string; order: number; is_cover: boolean }[]> {
+): Promise<{ photos: { url: string; order: number; is_cover: boolean }[]; warnings: { photoIndex: number; warning: string }[] }> {
   const supabase = createAdminClient();
-  const results: { url: string; order: number; is_cover: boolean }[] = [];
+  const photos: { url: string; order: number; is_cover: boolean }[] = [];
+  const warnings: { photoIndex: number; warning: string }[] = [];
   const limited = photoUrls.slice(0, 40);
   let order = 0;
 
@@ -468,10 +470,10 @@ export async function downloadAndStorePhotos(
 
       const buffer = Buffer.from(await res.arrayBuffer());
 
-      // Skip floor plans, site maps, diagrams
+      // Detect floor plans — include but flag with a warning
       if (await isFloorPlanImage(buffer)) {
-        console.log(`[scraper] Skipping floor plan image ${i}: ${limited[i].substring(0, 60)}`);
-        continue;
+        console.log(`[scraper] Floor plan detected at index ${i}: ${limited[i].substring(0, 60)}`);
+        warnings.push({ photoIndex: order, warning: "Floor plan detected — review before including" });
       }
 
       const path = `listings/${userId}/${listingId}/photos/${order}.jpg`;
@@ -486,14 +488,14 @@ export async function downloadAndStorePhotos(
         .from("listing-photos")
         .getPublicUrl(path);
 
-      results.push({ url: publicUrl, order, is_cover: order === 0 });
+      photos.push({ url: publicUrl, order, is_cover: order === 0 });
       order++;
     } catch {
       // skip failed photos
     }
   }
 
-  return results;
+  return { photos, warnings };
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────

@@ -14,6 +14,9 @@ import {
   Download, Copy, Share2, QrCode, CheckCircle2, Loader2, ExternalLink, ArrowLeft
 } from "lucide-react";
 import type { JobStatusComplete } from "@/lib/types";
+import { ContentPackView } from "@/components/dashboard/content-pack";
+import { VideoPlayer } from "@/components/dashboard/video-player";
+import { SocialPreviews } from "@/components/dashboard/social-previews";
 
 function copyToClipboard(text: string, label = "Copied!") {
   navigator.clipboard.writeText(text).then(() => toast.success(label));
@@ -91,69 +94,55 @@ function DoneContent() {
       </div>
 
       {/* Video players */}
-      <div className="grid grid-cols-2 gap-6 mb-8">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
         {/* 16:9 */}
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <Badge variant="secondary">16:9 — Desktop / TV</Badge>
-          </div>
-          <div className="rounded-xl overflow-hidden bg-black aspect-video">
-            {data.video.url16x9 ? (
-              <video
-                src={data.video.url16x9}
-                controls
-                autoPlay
-                muted
-                loop
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center">
-                <Loader2 className="w-6 h-6 animate-spin text-white/40" />
-              </div>
-            )}
-          </div>
-          <Button
-            className="w-full"
-            onClick={() => window.open(data.video.url16x9, "_blank")}
-          >
-            <Download className="w-4 h-4 mr-2" />
-            Download 16:9
+          <Badge variant="secondary">16:9 — Desktop / TV</Badge>
+          {data.video.url16x9 ? (
+            <VideoPlayer src={data.video.url16x9} poster={data.video.thumbnailUrl} />
+          ) : (
+            <div className="rounded-xl bg-black aspect-video flex items-center justify-center">
+              <Loader2 className="w-6 h-6 animate-spin text-white/40" />
+            </div>
+          )}
+          <Button className="w-full" onClick={() => window.open(data.video.url16x9, "_blank")}>
+            <Download className="w-4 h-4 mr-2" />Download 16:9
           </Button>
         </div>
 
         {/* 9:16 */}
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <Badge variant="secondary">9:16 — Mobile / Story</Badge>
-          </div>
-          <div className="rounded-xl overflow-hidden bg-black" style={{ aspectRatio: "9/16", maxHeight: "400px" }}>
-            {data.video.url9x16 ? (
-              <video
-                src={data.video.url9x16}
-                controls
-                muted
-                loop
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <div className="w-full h-full flex items-center justify-center">
-                <p className="text-white/40 text-sm">9:16 not generated</p>
-              </div>
-            )}
+          <Badge variant="secondary">9:16 — Mobile / Story</Badge>
+          <div className="flex justify-center">
+            <div className="w-48 rounded-xl overflow-hidden bg-black" style={{ aspectRatio: "9/16" }}>
+              {data.video.url9x16 ? (
+                <video src={data.video.url9x16} controls muted loop className="w-full h-full object-cover" />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center">
+                  <p className="text-white/40 text-xs">Not generated</p>
+                </div>
+              )}
+            </div>
           </div>
           {data.video.url9x16 && (
-            <Button
-              variant="outline"
-              className="w-full"
-              onClick={() => window.open(data.video.url9x16, "_blank")}
-            >
-              <Download className="w-4 h-4 mr-2" />
-              Download 9:16
+            <Button variant="outline" className="w-full" onClick={() => window.open(data.video.url9x16, "_blank")}>
+              <Download className="w-4 h-4 mr-2" />Download 9:16
             </Button>
           )}
         </div>
       </div>
+
+      {/* Social Previews */}
+      {data.video.url16x9 && (
+        <div className="mb-8">
+          <h3 className="text-lg font-semibold mb-4">Platform Previews</h3>
+          <SocialPreviews
+            thumbnailUrl={data.video.thumbnailUrl || data.video.url16x9}
+            title={data.listing.descriptionMls?.split(".")[0] || "Your Listing"}
+            duration={data.video.durationSeconds}
+          />
+        </div>
+      )}
 
       <div className="grid grid-cols-3 gap-6">
         {/* Descriptions */}
@@ -311,6 +300,20 @@ function DoneContent() {
           )}
         </div>
       </div>
+
+      {/* Content Pack */}
+      {listingId && (
+        <div className="mt-8">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Content Pack</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ContentPackView listingId={listingId} />
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 }
