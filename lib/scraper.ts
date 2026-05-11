@@ -214,13 +214,25 @@ async function scrapeZillowGraphQL(url: string): Promise<ScrapedData> {
       "content-type": "application/json",
       "accept": "*/*",
       "accept-language": "en-US,en;q=0.9",
+      "origin": "https://www.zillow.com",
       "referer": `https://www.zillow.com/homedetails/${zpid}_zpid/`,
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-origin",
       "x-client": "web",
     },
     body: JSON.stringify({
-      operationName: "ForSaleDoubleScrollFullRenderQuery",
-      variables: { zpid: parseInt(zpid, 10), contactFormRenderParameter: {} },
-      clientVersion: "home-details/6.1.2.0.0.0.0",
+      query: `query GetHomeDetails($zpid: ID!) {
+        property(zpid: $zpid) {
+          address { streetAddress city state zipcode }
+          price bedrooms bathrooms livingArea yearBuilt homeType
+          description
+          photos { url mixedSources { jpeg { url width } } }
+          originalPhotos { url }
+          responsivePhotos { url mixedSources { jpeg { url width } } }
+        }
+      }`,
+      variables: { zpid: zpid.toString() },
     }),
     timeout: { request: 15000 },
   });

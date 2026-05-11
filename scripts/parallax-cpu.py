@@ -11,6 +11,7 @@ Intensity: float, 0.3 (subtle) to 2.0 (dramatic). Default 1.0
 """
 import sys
 import os
+import subprocess
 import cv2
 import numpy as np
 
@@ -65,17 +66,26 @@ def render_parallax(
     total_frames = int(duration * fps)
     h, w = height, width
 
-    # Precompute base coordinate grids
-    xs = np.arange(w, dtype=np.float32)
-    ys = np.arange(h, dtype=np.float32)
+    # Overscan: render at 110% to prevent edge artifacts during parallax displacement
+    render_h = int(h * 1.1)
+    render_w = int(w * 1.1)
+    render_image = cv2.resize(image, (render_w, render_h))
+    render_depth = cv2.resize(depth, (render_w, render_h))
+
+    # Precompute base coordinate grids (in render space)
+    xs = np.arange(render_w, dtype=np.float32)
+    ys = np.arange(render_h, dtype=np.float32)
     x_grid, y_grid = np.meshgrid(xs, ys)
 
     # Foreground depth weight: closer objects move more
     # invert depth so 1.0 = close (moves a lot), 0.0 = far (moves little)
-    fg_weight = (1.0 - depth)  # shape: (H, W)
+    fg_weight = (1.0 - render_depth)  # shape: (render_H, render_W)
 
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(output_path, fourcc, fps, (w, h))
+
+    cx_off = (render_w - w) // 2
+    cy_off = (render_h - h) // 2
 
     for frame_idx in range(total_frames):
         raw_t = frame_idx / max(total_frames - 1, 1)  # 0 → 1
@@ -128,9 +138,9 @@ def render_parallax(
         src_x = x_grid - fg_weight * dx * parallax_strength * 8
         src_y = y_grid - fg_weight * dy * parallax_strength * 8
 
-        # --- Scale/zoom around center ---
+        # --- Scale/zoom around render center ---
         if scale != 1.0:
-            cx, cy = w / 2.0, h / 2.0
+            cx, cy = render_w / 2.0, render_h / 2.0
             src_x = cx + (src_x - cx) / scale
             src_y = cy + (src_y - cy) / scale
 
@@ -138,20 +148,40 @@ def render_parallax(
         src_x = src_x + dx * 0.3
         src_y = src_y + dy * 0.3
 
-        # Clamp to image bounds
-        src_x = np.clip(src_x, 0, w - 1).astype(np.float32)
-        src_y = np.clip(src_y, 0, h - 1).astype(np.float32)
+        # Clamp to render image bounds
+        src_x = np.clip(src_x, 0, render_w - 1).astype(np.float32)
+        src_y = np.clip(src_y, 0, render_h - 1).astype(np.float32)
 
-        # Remap with bicubic interpolation
+        # Remap with bicubic interpolation (BORDER_REFLECT_101: mirrors edge pixels naturally)
         frame = cv2.remap(
-            image, src_x, src_y,
+            render_image, src_x, src_y,
             cv2.INTER_CUBIC,
-            borderMode=cv2.BORDER_REPLICATE,
+            borderMode=cv2.BORDER_REFLECT_101,
         )
+
+        # Crop from render size back to output size
+        frame = frame[cy_off:cy_off + h, cx_off:cx_off + w]
+
+        # Depth-of-field: blur background proportional to inverse depth
+        for sigma in [1, 2, 4]:
+            blurred = cv2.GaussianBlur(frame, (0, 0), sigma)
+            mask = ((1.0 - depth) > sigma * 0.25).astype(np.float32)[..., np.newaxis]
+            frame = (frame * (1 - mask) + blurred * mask).astype(np.uint8)
 
         writer.write(frame)
 
     writer.release()
+
+    # Re-encode with H.264 for quality and compatibility (avoids double-degradation)
+    raw_path = output_path + ".raw.mp4"
+    os.rename(output_path, raw_path)
+    subprocess.run(
+        ["ffmpeg", "-y", "-i", raw_path,
+         "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+         "-pix_fmt", "yuv420p", "-an", output_path],
+        check=True, capture_output=True,
+    )
+    os.remove(raw_path)
 
 
 MODEL_URL = "https://github.com/fabio-sim/Depth-Anything-ONNX/releases/download/v2.0.0/depth_anything_v2_vits.onnx"
