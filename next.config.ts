@@ -14,7 +14,22 @@ const nextConfig: NextConfig = {
       { protocol: "http", hostname: "localhost" },
     ],
   },
-  serverExternalPackages: ["fluent-ffmpeg", "playwright", "rebrowser-playwright", "got-scraping", "header-generator", "@imgly/background-removal"],
+  serverExternalPackages: [
+    "fluent-ffmpeg",
+    "ffmpeg-static",
+    "playwright",
+    "rebrowser-playwright",
+    "got-scraping",
+    "header-generator",
+    "@imgly/background-removal",
+    "sharp",
+    "bullmq",
+    "ioredis",
+    "onnxruntime-node",
+    "canvas",
+    "@aws-sdk/client-s3",
+    "@aws-sdk/s3-request-presigner",
+  ],
 };
 
 export default nextConfig;

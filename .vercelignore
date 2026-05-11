@@ -1,0 +1,6 @@
+scripts/models/
+tmp/
+public/videos/
+test-results/
+playwright-report/
+tests/
