@@ -26,6 +26,38 @@ const ffmpegStatic = require("ffmpeg-static");
 
 if (ffmpegStatic) ffmpegLib.setFfmpegPath(ffmpegStatic);
 
+// ─── Dependency checks ───────────────────────────────────────────────────────
+function checkDependencies() {
+  const { execSync } = require("child_process");
+  const python = process.platform === "win32" ? "python" : "python3";
+
+  try {
+    execSync(`${python} --version`, { stdio: "pipe" });
+  } catch {
+    console.error("[pipeline] WARNING: Python 3 not found. Ken Burns fallback will be used.");
+    console.error("  Install: brew install python3 (mac) or apt install python3 (linux)");
+  }
+
+  try {
+    execSync(`${python} -c "import cv2; import numpy; import onnxruntime"`, { stdio: "pipe" });
+  } catch {
+    console.error("[pipeline] WARNING: Python packages missing. Ken Burns fallback will be used.");
+    console.error("  Run: pip3 install -r requirements.txt");
+  }
+
+  if (!ffmpegStatic) {
+    try {
+      execSync("ffmpeg -version", { stdio: "pipe" });
+    } catch {
+      console.error("[pipeline] ERROR: FFmpeg not found and ffmpeg-static failed.");
+      console.error("  Install: brew install ffmpeg (mac) or apt install ffmpeg (linux)");
+      process.exit(1);
+    }
+  }
+}
+
+checkDependencies();
+
 const [, , jobId, listingId, userId, durationSecondsStr, style] = process.argv;
 const durationSeconds = parseInt(durationSecondsStr, 10) || 30;
 

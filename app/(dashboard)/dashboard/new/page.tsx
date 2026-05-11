@@ -24,13 +24,6 @@ import {
 import type { ListingPhoto } from "@/lib/types";
 import { createClient } from "@/lib/supabase/client";
 
-const DEMO_PHOTOS: ListingPhoto[] = [
-  { url: "https://images.pexels.com/photos/1396122/pexels-photo-1396122.jpeg", order: 0, is_cover: true },
-  { url: "https://images.pexels.com/photos/1396132/pexels-photo-1396132.jpeg", order: 1, is_cover: false },
-  { url: "https://images.pexels.com/photos/2102587/pexels-photo-2102587.jpeg", order: 2, is_cover: false },
-  { url: "https://images.pexels.com/photos/1643384/pexels-photo-1643384.jpeg", order: 3, is_cover: false },
-  { url: "https://images.pexels.com/photos/271624/pexels-photo-271624.jpeg", order: 4, is_cover: false },
-];
 
 interface ListingData {
   listingId: string;
@@ -98,46 +91,112 @@ export default function NewListingPage() {
     }
   }
 
-  function handleDemoFill() {
-    const demoId = crypto.randomUUID();
-    setListing({
-      listingId: demoId,
-      address: "2847 Maple Grove Dr, Austin, TX 78701",
-      city: "Austin",
-      price: 745000,
-      beds: 4,
-      baths: 3,
-      sqft: 2340,
-      description:
-        "Stunning contemporary home with open floor plan, chef's kitchen with quartz countertops, hardwood floors throughout, and a private backyard oasis with covered patio. Master suite with spa bath and walk-in closet.",
-      photos: DEMO_PHOTOS,
-    });
-    setPhotos(DEMO_PHOTOS);
-    setIsDemo(true);
-    setEditAddress("2847 Maple Grove Dr, Austin, TX 78701");
-    setEditCity("Austin");
-    setEditPrice("745000");
-    setEditBeds("4");
-    setEditBaths("3");
-    setEditSqft("2340");
-    toast.success("Demo listing loaded — feel free to explore!");
+  async function handleDemoFill() {
+    setScraping(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) { toast.error("Please log in"); return; }
+
+      const listingId = crypto.randomUUID();
+      const slug = `demo-${listingId.slice(0, 8)}`;
+
+      const demoPhotos: ListingPhoto[] = [
+        { url: "https://images.pexels.com/photos/106399/pexels-photo-106399.jpeg?w=1920", order: 0, is_cover: true },
+        { url: "https://images.pexels.com/photos/1571460/pexels-photo-1571460.jpeg?w=1920", order: 1, is_cover: false },
+        { url: "https://images.pexels.com/photos/2724749/pexels-photo-2724749.jpeg?w=1920", order: 2, is_cover: false },
+        { url: "https://images.pexels.com/photos/2062426/pexels-photo-2062426.jpeg?w=1920", order: 3, is_cover: false },
+        { url: "https://images.pexels.com/photos/1643384/pexels-photo-1643384.jpeg?w=1920", order: 4, is_cover: false },
+        { url: "https://images.pexels.com/photos/3935350/pexels-photo-3935350.jpeg?w=1920", order: 5, is_cover: false },
+      ];
+
+      const { error } = await supabase.from("listings").insert({
+        id: listingId,
+        user_id: user.id,
+        slug,
+        address: "742 Evergreen Terrace",
+        city: "Austin",
+        state: "TX",
+        zip: "78701",
+        price: 485000,
+        beds: 3,
+        baths: 2,
+        sqft: 1842,
+        raw_description: "Charming 3-bedroom home in the heart of Austin with modern finishes, open floor plan, and a beautifully landscaped backyard.",
+        source_url: null,
+        photos: demoPhotos,
+      });
+
+      if (error) { toast.error("Failed to create demo: " + error.message); return; }
+
+      setListing({
+        listingId, address: "742 Evergreen Terrace", city: "Austin",
+        price: 485000, beds: 3, baths: 2, sqft: 1842,
+        description: "Charming 3-bedroom home in the heart of Austin with modern finishes, open floor plan, and a beautifully landscaped backyard.",
+        photos: demoPhotos,
+      });
+      setPhotos(demoPhotos);
+      setIsDemo(false); // real DB row now exists
+      setEditAddress("742 Evergreen Terrace");
+      setEditCity("Austin");
+      setEditPrice("485000");
+      setEditBeds("3");
+      setEditBaths("2");
+      setEditSqft("1842");
+      toast.success("Demo listing loaded — click Continue to generate a video!");
+    } catch (err: unknown) {
+      toast.error("Demo failed: " + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setScraping(false);
+    }
   }
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
-    if (!listing) return;
     setUploadingPhotos(true);
     try {
+      let currentListing = listing;
+
+      // If no listing yet, create one on-the-fly for manual uploads
+      if (!currentListing) {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) { toast.error("Please log in"); return; }
+
+        const listingId = crypto.randomUUID();
+        const slug = `upload-${listingId.slice(0, 8)}`;
+
+        const { error } = await supabase.from("listings").insert({
+          id: listingId,
+          user_id: user.id,
+          slug,
+          address: "",
+          city: "",
+          state: "",
+          zip: "",
+          photos: [],
+        });
+
+        if (error) { toast.error("Failed to create listing: " + error.message); return; }
+
+        currentListing = {
+          listingId, address: "", city: "",
+          price: null, beds: null, baths: null, sqft: null,
+          description: "", photos: [],
+        };
+        setListing(currentListing);
+        setIsDemo(false);
+        toast.info("Listing created — fill in the details below");
+      }
+
       const newPhotos: ListingPhoto[] = [];
       for (let i = 0; i < acceptedFiles.length; i++) {
         const file = acceptedFiles[i];
-        const path = `listings/${listing.listingId}/photos/${Date.now()}-${i}.jpg`;
+        const storagePath = `listings/${currentListing.listingId}/photos/${Date.now()}-${i}.jpg`;
         const { error } = await supabase.storage
           .from("listing-photos")
-          .upload(path, file, { contentType: file.type, upsert: true });
+          .upload(storagePath, file, { contentType: file.type, upsert: true });
         if (error) continue;
         const { data: { publicUrl } } = supabase.storage
           .from("listing-photos")
-          .getPublicUrl(path);
+          .getPublicUrl(storagePath);
         newPhotos.push({ url: publicUrl, order: photos.length + i, is_cover: false });
       }
       setPhotos((prev) => [...prev, ...newPhotos]);
@@ -151,7 +210,7 @@ export default function NewListingPage() {
     onDrop,
     accept: { "image/*": [".jpg", ".jpeg", ".png", ".webp"] },
     maxFiles: 40,
-    disabled: !listing || uploadingPhotos,
+    disabled: uploadingPhotos,
   });
 
   function removePhoto(idx: number) {
@@ -409,7 +468,7 @@ export default function NewListingPage() {
                 isDragActive
                   ? "border-primary bg-primary/5"
                   : "border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/30"
-              } ${!listing || uploadingPhotos ? "opacity-50 cursor-not-allowed" : ""}`}
+              } ${uploadingPhotos ? "opacity-50 cursor-not-allowed" : ""}`}
             >
               <input {...getInputProps()} />
               {uploadingPhotos ? (

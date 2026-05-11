@@ -154,10 +154,25 @@ def render_parallax(
     writer.release()
 
 
+MODEL_URL = "https://github.com/fabio-sim/Depth-Anything-ONNX/releases/download/v2.0.0/depth_anything_v2_vits.onnx"
+
+
+def ensure_model():
+    if os.path.exists(MODEL_PATH):
+        return
+    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+    print(f"[parallax] Downloading depth model (~25MB)...", flush=True)
+    import urllib.request
+    urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+    print(f"[parallax] Model ready at {MODEL_PATH}", flush=True)
+
+
 def main():
     if len(sys.argv) < 3:
         print("Usage: parallax-cpu.py <image> <output> [motion] [intensity] [duration]")
         sys.exit(1)
+
+    ensure_model()
 
     image_path  = sys.argv[1]
     output_path = sys.argv[2]
@@ -165,10 +180,6 @@ def main():
     intensity   = float(sys.argv[4]) if len(sys.argv) > 4 else 1.0
     duration    = float(sys.argv[5]) if len(sys.argv) > 5 else 4.0
     reverse     = (sys.argv[6].lower() == "true") if len(sys.argv) > 6 else False
-
-    if not os.path.exists(MODEL_PATH):
-        print(f"ERROR: depth model not found at {MODEL_PATH}", file=sys.stderr)
-        sys.exit(1)
 
     image = cv2.imread(image_path)
     if image is None:

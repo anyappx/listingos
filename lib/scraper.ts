@@ -391,17 +391,23 @@ export async function scrapeUrl(url: string): Promise<ScrapedData> {
     try {
       return await scrapeZillow(url);
     } catch (err) {
-      console.warn("[scraper] Zillow scrape failed, falling back to URL parse:", err);
+      console.warn("[scraper] Zillow blocked:", err);
       const fromUrl = parseZillowUrl(url);
-      return {
-        address: fromUrl.address || "",
-        city: fromUrl.city || "",
-        state: fromUrl.state || "",
-        zip: fromUrl.zip || "",
-        price: null, beds: null, baths: null, sqft: null,
-        description: "",
-        photoUrls: [],
-      };
+      if (fromUrl.address) {
+        return {
+          address: fromUrl.address || "",
+          city: fromUrl.city || "",
+          state: fromUrl.state || "",
+          zip: fromUrl.zip || "",
+          price: null, beds: null, baths: null, sqft: null,
+          description: "",
+          photoUrls: [],
+          warnings: [{ photoIndex: -1, warning: "Zillow blocked automated access. Photos must be uploaded manually." }],
+        };
+      }
+      throw new Error(
+        "Zillow blocked this request. Try a Redfin URL instead, or upload photos manually."
+      );
     }
   }
 

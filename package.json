@@ -8,6 +8,8 @@
   "scripts": {
     "dev": "next dev",
     "dev:4000": "next dev -p 4000",
+    "dev:worker": "node scripts/worker-poll.js",
+    "dev:all": "npx concurrently \"next dev\" \"node scripts/worker-poll.js\"",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
