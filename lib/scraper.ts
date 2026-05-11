@@ -35,15 +35,15 @@ export interface ScrapedData {
   warnings?: { photoIndex: number; warning: string }[];
 }
 
-// ─── Playwright — uses system Chrome to bypass PerimeterX/bot detection ──────
-// Works because system Chrome has real TLS + full JS environment.
+// ─── Playwright — uses rebrowser-playwright to patch CDP Runtime.enable leak ──
+// rebrowser-playwright patches the Runtime.enable CDP call that PerimeterX detects.
 // Strategy: navigate to site root first (lets PerimeterX initialize), then listing.
 async function playwrightFetch(
   urls: string[],  // [warmupUrl, targetUrl] — navigate in sequence
   waitMs = 3000    // pause after warmup for bot-protection JS to run
 ): Promise<string> {
-  // Dynamic import so Next.js doesn't try to SSR playwright
-  const { chromium } = await import("playwright");
+  // Use rebrowser-playwright — patches CDP Runtime.enable leak that PerimeterX detects
+  const { chromium } = await import("rebrowser-playwright");
 
   // Try system Chrome first, fall back to bundled Chromium
   const executablePaths = [
@@ -197,39 +197,156 @@ async function scrapeZillowViaScraperApi(url: string): Promise<string> {
   return res.text();
 }
 
-async function scrapeZillow(url: string): Promise<ScrapedData> {
-  let html = "";
+// ─── Layer 1: Zillow GraphQL API (no browser needed — uses internal API) ──────
+async function scrapeZillowGraphQL(url: string): Promise<ScrapedData> {
+  const zpidMatch = url.match(/\/(\d+)_zpid/);
+  if (!zpidMatch) throw new Error("No ZPID found in URL");
+  const zpid = zpidMatch[1];
 
-  // Try ScraperAPI first if key is set (bypasses PerimeterX via residential IPs)
-  const scraperKey = process.env.SCRAPER_API_KEY;
-  if (scraperKey) {
-    try {
-      html = await scrapeZillowViaScraperApi(url);
-      console.log(`[scraper] ScraperAPI fetched ${html.length} bytes for Zillow`);
-    } catch (e) {
-      console.warn("[scraper] ScraperAPI failed, trying Playwright:", e);
-    }
-  }
+  const { gotScraping } = await import("got-scraping");
+  const res = await gotScraping.post("https://www.zillow.com/graphql/", {
+    headerGeneratorOptions: {
+      browsers: [{ name: "chrome", minVersion: 124 }],
+      devices: ["desktop"],
+      operatingSystems: ["macos"],
+    },
+    headers: {
+      "content-type": "application/json",
+      "accept": "*/*",
+      "accept-language": "en-US,en;q=0.9",
+      "referer": `https://www.zillow.com/homedetails/${zpid}_zpid/`,
+      "x-client": "web",
+    },
+    body: JSON.stringify({
+      operationName: "ForSaleDoubleScrollFullRenderQuery",
+      variables: { zpid: parseInt(zpid, 10), contactFormRenderParameter: {} },
+      clientVersion: "home-details/6.1.2.0.0.0.0",
+    }),
+    timeout: { request: 15000 },
+  });
 
-  // Fallback: Playwright with homepage warmup
-  if (!html || html.includes("Access to this page has been denied") || html.length < 10000) {
-    html = await playwrightFetch(
-      ["https://www.zillow.com/", url],
-      3000
-    );
-  }
+  let gqlData: Record<string, unknown>;
+  try { gqlData = JSON.parse(res.body); } catch { throw new Error("GraphQL: invalid JSON response"); }
 
-  if (html.includes("Access to this page has been denied") || html.length < 10000) {
-    throw new Error("Zillow blocked even with browser automation");
-  }
+  const property = (gqlData?.data as Record<string, unknown>)?.property as Record<string, unknown> | undefined;
+  if (!property) throw new Error("GraphQL: no property data returned");
+
+  const rawPhotos = (property.photos || property.responsivePhotos) as Array<Record<string, unknown>> | undefined;
+  const photoUrls: string[] = (rawPhotos || [])
+    .map((p) => {
+      const sources = ((p.mixedSources as Record<string, unknown>)?.jpeg as Array<{ url: string; width: number }>) || [];
+      return sources.sort((a, b) => b.width - a.width)[0]?.url;
+    })
+    .filter((u): u is string => Boolean(u));
+
+  const street = String(property.streetAddress || "");
+  const city = String(property.city || "");
+  const state = String(property.state || "");
+  const zip = String(property.zipcode || "");
+
+  console.log(`[scraper] Zillow GraphQL: ${photoUrls.length} photos for ${street}`);
+
+  return {
+    address: street,
+    city, state, zip,
+    price: typeof property.price === "number" ? property.price : null,
+    beds: typeof property.bedrooms === "number" ? property.bedrooms : null,
+    baths: typeof property.bathrooms === "number" ? property.bathrooms : null,
+    sqft: typeof property.livingArea === "number" ? property.livingArea : null,
+    description: String(property.description || ""),
+    photoUrls,
+    warnings: [],
+  };
+}
+
+// ─── Layer 3: Google Cache fallback (static HTML, no JS challenges) ───────────
+async function scrapeZillowCache(url: string): Promise<ScrapedData> {
+  const cacheUrl = `https://webcache.googleusercontent.com/search?q=cache:${encodeURIComponent(url)}`;
+  const html = await playwrightFetch([cacheUrl], 1000);
+  if (!html || html.length < 5000) throw new Error("Cache: empty response");
 
   const $ = cheerio.load(html);
   const data = parseZillowHtml($, html);
 
-  // Fill address from URL if scraping missed it
-  if (!data.address) Object.assign(data, parseZillowUrl(url));
+  // Cache pages often have photos in regular img tags too
+  if (!data.photoUrls.length) {
+    const cachePhotos: string[] = [];
+    $('img[src*="photos.zillowstatic.com"]').each((_, el) => {
+      const src = $(el).attr("src");
+      if (src) cachePhotos.push(src);
+    });
+    data.photoUrls = cachePhotos;
+  }
 
+  if (!data.address && !data.photoUrls.length) throw new Error("Cache: no usable data");
+  console.log(`[scraper] Zillow cache: ${data.photoUrls.length} photos`);
   return data;
+}
+
+async function scrapeZillow(url: string): Promise<ScrapedData> {
+  // Layer 1: GraphQL API (fastest, no browser — Zillow's own internal API)
+  try {
+    return await scrapeZillowGraphQL(url);
+  } catch (e) {
+    console.warn("[scraper] Zillow GraphQL failed:", (e as Error).message);
+  }
+
+  // Layer 2: ScraperAPI (residential proxy) — only if key is configured
+  const scraperKey = process.env.SCRAPER_API_KEY;
+  if (scraperKey) {
+    try {
+      const html = await scrapeZillowViaScraperApi(url);
+      if (html.length > 10000 && !html.includes("Access to this page has been denied")) {
+        const $ = cheerio.load(html);
+        const data = parseZillowHtml($, html);
+        if (!data.address) Object.assign(data, parseZillowUrl(url));
+        console.log(`[scraper] Zillow ScraperAPI: ${data.photoUrls.length} photos`);
+        return data;
+      }
+    } catch (e) {
+      console.warn("[scraper] Zillow ScraperAPI failed:", (e as Error).message);
+    }
+  }
+
+  // Layer 3: rebrowser-playwright with homepage warmup (patches CDP Runtime.enable leak)
+  try {
+    const html = await playwrightFetch(["https://www.zillow.com/", url], 3000);
+    if (html.length > 10000 && !html.includes("Access to this page has been denied")) {
+      const $ = cheerio.load(html);
+      const data = parseZillowHtml($, html);
+      if (!data.address) Object.assign(data, parseZillowUrl(url));
+      console.log(`[scraper] Zillow rebrowser: ${data.photoUrls.length} photos`);
+      return data;
+    }
+    throw new Error("rebrowser: blocked or insufficient content");
+  } catch (e) {
+    console.warn("[scraper] Zillow rebrowser failed:", (e as Error).message);
+  }
+
+  // Layer 4: Google Cache (static snapshot, no JS challenge)
+  try {
+    const data = await scrapeZillowCache(url);
+    if (!data.address) Object.assign(data, parseZillowUrl(url));
+    return data;
+  } catch (e) {
+    console.warn("[scraper] Zillow cache failed:", (e as Error).message);
+  }
+
+  // All layers failed — return what we can parse from URL with clear warning
+  const fromUrl = parseZillowUrl(url);
+  if (fromUrl.address) {
+    return {
+      address: fromUrl.address || "",
+      city: fromUrl.city || "",
+      state: fromUrl.state || "",
+      zip: fromUrl.zip || "",
+      price: null, beds: null, baths: null, sqft: null,
+      description: "",
+      photoUrls: [],
+      warnings: [{ photoIndex: -1, warning: "Zillow blocked automated access. Photos must be uploaded manually." }],
+    };
+  }
+  throw new Error("Zillow blocked this request. Try a Redfin URL instead, or upload photos manually.");
 }
 
 // ─── Redfin ───────────────────────────────────────────────────────────────────

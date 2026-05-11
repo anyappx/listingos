@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { X, CheckCircle2, Circle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -13,10 +13,13 @@ interface OnboardingBannerProps {
 }
 
 export function OnboardingBanner({ brandKit }: OnboardingBannerProps) {
-  const [dismissed, setDismissed] = useState<boolean>(() => {
-    if (typeof window === "undefined") return true;
-    return localStorage.getItem(DISMISSED_KEY) === "true";
-  });
+  const [dismissed, setDismissed] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+    setDismissed(localStorage.getItem(DISMISSED_KEY) === "true");
+  }, []);
 
   const hasLogo = !!brandKit?.logo_url;
   const hasName = !!brandKit?.agent_name;
@@ -31,8 +34,8 @@ export function OnboardingBanner({ brandKit }: OnboardingBannerProps) {
   const completedCount = steps.filter((s) => s.done).length;
   const allDone = completedCount === steps.length;
 
-  // Hide if all done or dismissed
-  if (allDone || dismissed) return null;
+  // Don't render until mounted (avoids localStorage hydration mismatch)
+  if (!mounted || allDone || dismissed) return null;
 
   function handleDismiss() {
     localStorage.setItem(DISMISSED_KEY, "true");

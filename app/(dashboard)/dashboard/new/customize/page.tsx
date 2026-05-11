@@ -10,16 +10,66 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { ArrowRight, Play, Clock, ArrowLeft, Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { MusicTrack, VideoStyle, BrandKit } from "@/lib/types";
+import { VIDEO_THEMES } from "@/lib/types";
+
+interface PhotoEntry {
+  url: string;
+  order: number;
+  is_cover?: boolean;
+  camera?: string;
+  intensity?: number;
+  skySrc?: string;
+  dayToDusk?: boolean;
+}
+
+interface PhotoSetting {
+  camera: string;
+  intensity: string;
+  skySrc: string;
+  dayToDusk: boolean;
+}
+
+const CAMERA_MOVES = ["dolly", "horizontal", "zoom", "orbital", "circle"] as const;
+const INTENSITIES = [
+  { value: "0.5", label: "Subtle" },
+  { value: "1.0", label: "Normal" },
+  { value: "1.5", label: "Dramatic" },
+];
+const SKY_OPTIONS = [
+  { value: "", label: "None" },
+  { value: "clear_blue", label: "Clear Blue" },
+  { value: "sunset", label: "Sunset" },
+  { value: "golden", label: "Golden Hour" },
+  { value: "dramatic", label: "Dramatic" },
+  { value: "twilight", label: "Twilight" },
+  { value: "dawn", label: "Dawn" },
+  { value: "stormy", label: "Stormy" },
+  { value: "dusk_purple", label: "Dusk Purple" },
+  { value: "starry", label: "Starry" },
+];
+const ROOM_CAMERAS = ["dolly", "zoom", "horizontal", "orbital", "circle", "dolly", "zoom", "horizontal", "orbital", "circle", "dolly", "zoom"];
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const STYLES: { id: VideoStyle; label: string; description: string; emoji: string }[] = [
-  { id: "modern", label: "Modern", description: "Clean, contemporary cuts", emoji: "🏙️" },
-  { id: "luxury", label: "Luxury", description: "Slow, elegant panning", emoji: "✨" },
-  { id: "energetic", label: "Energetic", description: "Fast-paced dynamic motion", emoji: "⚡" },
-  { id: "minimal", label: "Minimal", description: "Subtle, understated movement", emoji: "◻️" },
-];
+const THEME_EMOJIS: Record<string, string> = {
+  Modern: "🏙️", Luxury: "✨", Energetic: "⚡", Minimal: "◻️",
+  Cinematic: "🎬", Coastal: "🌊", Desert: "🌵", Urban: "🖤",
+};
+const THEME_DESCRIPTIONS: Record<string, string> = {
+  Modern: "Clean, contemporary cuts", Luxury: "Slow, elegant panning",
+  Energetic: "Fast-paced dynamic motion", Minimal: "Subtle, understated movement",
+  Cinematic: "Dramatic depth + grain", Coastal: "Bright, airy tones",
+  Desert: "Warm earth tones", Urban: "High-contrast street style",
+};
+const STYLES: { id: VideoStyle; label: string; description: string; emoji: string }[] =
+  VIDEO_THEMES.map((t) => ({
+    id: t.name.toLowerCase() as VideoStyle,
+    label: t.name,
+    description: THEME_DESCRIPTIONS[t.name] ?? t.name,
+    emoji: THEME_EMOJIS[t.name] ?? "🎨",
+  }));
 
 const DURATIONS = [
   { value: 15, label: "15s", description: "Instagram Story" },
@@ -76,21 +126,43 @@ function CustomizeContent() {
   const [genreFilter, setGenreFilter] = useState<GenreFilter>("All");
   const [musicVolume, setMusicVolume] = useState(50);
 
+  // Per-photo controls
+  const [photos, setPhotos] = useState<PhotoEntry[]>([]);
+  const [photoSettings, setPhotoSettings] = useState<Record<number, PhotoSetting>>({});
+
+  function updatePhotoSetting(idx: number, patch: Partial<PhotoSetting>) {
+    setPhotoSettings((prev) => ({ ...prev, [idx]: { ...prev[idx], ...patch } }));
+  }
+
   useEffect(() => {
     if (!listingId) { router.push("/dashboard/new"); return; }
 
     async function load() {
-      const [tracksRes, brandRes] = await Promise.all([
+      const [tracksRes, brandRes, listingRes] = await Promise.all([
         supabase.from("music_tracks").select("*").order("display_order"),
         fetch("/api/brand"),
+        supabase.from("listings").select("photos").eq("id", listingId).single(),
       ]);
       const { data: trackData } = tracksRes;
       const { brandKit: kit } = await brandRes.json() as { brandKit: BrandKit | null };
+      const photoData = (listingRes.data?.photos || []) as PhotoEntry[];
 
       const loaded = (trackData as MusicTrack[]) || [];
       setTracks(loaded);
       if (loaded.length > 0) setSelectedTrackId(loaded[0].id);
       setBrandKit(kit);
+      setPhotos(photoData);
+
+      const defaults: Record<number, PhotoSetting> = {};
+      photoData.forEach((p, i) => {
+        defaults[i] = {
+          camera: p.camera || ROOM_CAMERAS[i % ROOM_CAMERAS.length],
+          intensity: String(p.intensity ?? 1.0),
+          skySrc: p.skySrc || "",
+          dayToDusk: p.dayToDusk ?? false,
+        };
+      });
+      setPhotoSettings(defaults);
       setLoading(false);
     }
     load();
@@ -116,6 +188,26 @@ function CustomizeContent() {
     if (!listingId || !selectedTrackId) return;
     setGenerating(true);
     try {
+      // Patch listing photos with per-photo settings before generating
+      if (photos.length > 0) {
+        const enrichedPhotos = photos.map((p, i) => {
+          const s = photoSettings[i];
+          if (!s) return p;
+          return {
+            ...p,
+            camera: s.camera,
+            intensity: parseFloat(s.intensity),
+            skySrc: s.skySrc || undefined,
+            dayToDusk: s.dayToDusk,
+          };
+        });
+        await fetch(`/api/listings/${listingId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ photos: enrichedPhotos }),
+        });
+      }
+
       const effectiveHeadline = headline === "Custom" ? customHeadline : headline;
       const res = await fetch("/api/generate", {
         method: "POST",
@@ -124,7 +216,9 @@ function CustomizeContent() {
           listingId,
           style,
           durationSeconds: duration,
-          formats: selectedFormats,
+          formats: selectedFormats.includes("16:9") && selectedFormats.includes("9:16")
+            ? "both"
+            : selectedFormats.includes("16:9") ? "16x9" : "9x16",
           includeClean,
           musicTrackId: selectedTrackId,
           includeNeighborhoodBroll: includeBroll,
@@ -228,20 +322,20 @@ function CustomizeContent() {
           {/* Style picker */}
           <div>
             <h3 className="font-semibold mb-3">Video Style</h3>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-4 gap-2">
               {STYLES.map((s) => (
                 <button
                   key={s.id}
                   onClick={() => setStyle(s.id)}
-                  className={`p-4 rounded-xl border-2 text-left transition-all ${
+                  className={`p-3 rounded-xl border-2 text-left transition-all ${
                     style === s.id
                       ? "border-primary bg-primary/5"
                       : "border-border hover:border-primary/40"
                   }`}
                 >
-                  <span className="text-2xl mb-2 block">{s.emoji}</span>
-                  <p className="font-medium text-sm">{s.label}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">{s.description}</p>
+                  <span className="text-xl mb-1 block">{s.emoji}</span>
+                  <p className="font-medium text-xs">{s.label}</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5 leading-tight">{s.description}</p>
                 </button>
               ))}
             </div>
@@ -479,6 +573,72 @@ function CustomizeContent() {
               />
             </button>
           </div>
+
+          {/* Per-photo motion controls */}
+          {photos.length > 0 && (
+            <>
+              <Separator />
+              <div>
+                <h3 className="font-semibold mb-1">Per-Photo Motion</h3>
+                <p className="text-xs text-muted-foreground mb-3">Fine-tune camera movement, sky, and effects for each photo.</p>
+                <div className="space-y-2">
+                  {photos.map((photo, i) => {
+                    const s = photoSettings[i] ?? { camera: ROOM_CAMERAS[i % ROOM_CAMERAS.length], intensity: "1.0", skySrc: "", dayToDusk: false };
+                    return (
+                      <div key={i} className="flex items-center gap-2 p-2 rounded-lg border bg-muted/30">
+                        {/* Thumbnail */}
+                        <div className="w-14 h-10 rounded overflow-hidden shrink-0 bg-black">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={photo.url} alt={`Photo ${i + 1}`} className="w-full h-full object-cover" />
+                        </div>
+                        {/* Camera move */}
+                        <Select value={s.camera} onValueChange={(v) => updatePhotoSetting(i, { camera: v ?? s.camera })}>
+                          <SelectTrigger className="h-7 text-xs w-28">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {CAMERA_MOVES.map((m) => (
+                              <SelectItem key={m} value={m} className="text-xs capitalize">{m}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {/* Intensity */}
+                        <Select value={s.intensity} onValueChange={(v) => updatePhotoSetting(i, { intensity: v ?? s.intensity })}>
+                          <SelectTrigger className="h-7 text-xs w-24">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {INTENSITIES.map((opt) => (
+                              <SelectItem key={opt.value} value={opt.value} className="text-xs">{opt.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {/* Sky replacement */}
+                        <Select value={s.skySrc} onValueChange={(v) => updatePhotoSetting(i, { skySrc: v ?? "", dayToDusk: false })}>
+                          <SelectTrigger className="h-7 text-xs w-28">
+                            <SelectValue placeholder="Sky" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {SKY_OPTIONS.map((opt) => (
+                              <SelectItem key={opt.value} value={opt.value} className="text-xs">{opt.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {/* Day→Dusk toggle */}
+                        <button
+                          title="Day → Dusk"
+                          onClick={() => updatePhotoSetting(i, { dayToDusk: !s.dayToDusk, skySrc: "" })}
+                          className={`h-7 px-2 rounded border text-xs font-medium transition-colors shrink-0 ${s.dayToDusk ? "bg-orange-500 text-white border-orange-500" : "border-border text-muted-foreground hover:border-primary/50"}`}
+                        >
+                          🌅
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          )}
 
           {/* Action buttons */}
           <div className="flex gap-3 pt-2">

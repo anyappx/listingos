@@ -15,6 +15,10 @@ export function buildCaptionPrompt(input: CaptionInput): string {
     luxury: "elevated and aspirational",
     energetic: "exciting and dynamic",
     minimal: "clean and understated",
+    cinematic: "dramatic and cinematic",
+    coastal: "bright and airy",
+    desert: "warm and earthy",
+    urban: "bold and high-contrast",
   };
 
   return `You are a real estate social media expert. Generate platform-specific captions for a listing video.

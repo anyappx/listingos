@@ -3,7 +3,7 @@
 export type Plan = "trial" | "solo" | "agent";
 export type SubscriptionStatus = "trialing" | "active" | "canceled" | "past_due";
 export type VideoStatus = "queued" | "processing" | "complete" | "failed";
-export type VideoStyle = "modern" | "luxury" | "energetic" | "minimal";
+export type VideoStyle = "modern" | "luxury" | "energetic" | "minimal" | "cinematic" | "coastal" | "desert" | "urban";
 export type VideoFormat = "both" | "16x9" | "9x16";
 export type MusicGenre = "modern" | "luxury" | "upbeat" | "calm" | "bold";
 
@@ -168,6 +168,10 @@ export interface JobStatusComplete {
     url9x16: string;
     thumbnailUrl: string;
     durationSeconds: number;
+    gifUrl?: string;
+    selectorThumbnails?: string[];
+    url1x1?: string;
+    url4x5?: string;
   };
   listing: {
     descriptionMls: string;

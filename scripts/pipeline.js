@@ -77,6 +77,12 @@ const LOWER_THIRD_IN = 3.5;    // seconds into full video (after intro)
 const STATS_START = 6.5;       // seconds into full video
 const STATS_END = 9.0;
 
+// BPM map for royalty-free tracks in /public/music/
+const TRACK_BPM = {
+  "track-01": 95, "track-02": 120, "track-03": 85, "track-04": 128,
+  "track-05": 110, "track-06": 75,  "track-07": 140, "track-08": 100,
+};
+
 // Adaptive timing: use all available photos while keeping clip duration >= 2.5s
 // Returns { photoCount, clipDuration }
 function calcPhotoTiming(totalPhotos, targetDuration) {
@@ -90,6 +96,14 @@ function calcPhotoTiming(totalPhotos, targetDuration) {
     if (clipD >= MIN_CLIP_D) return { photoCount: n, clipDuration: parseFloat(clipD.toFixed(2)) };
   }
   return { photoCount: 1, clipDuration: targetDuration - FIXED };
+}
+
+// Snap clip duration to nearest even beat count for on-beat cuts
+function beatAlignedClipDuration(targetSecs, bpm) {
+  if (!bpm) return targetSecs;
+  const beatLen = 60 / bpm;
+  const beats = Math.round(targetSecs / beatLen / 2) * 2; // nearest even beat count
+  return Math.max(2, Math.min(6, beats * beatLen));        // clamp 2–6s
 }
 
 // ─── Parallax motion presets (used by parallax-cpu.py) ───────────────────────
@@ -811,9 +825,15 @@ async function run() {
     const allPhotos = (listing.photos || []);
     if (allPhotos.length === 0) throw new Error("No photos on listing");
 
-    const { photoCount, clipDuration: CLIP_DURATION } = calcPhotoTiming(allPhotos.length, durationSeconds);
+    const { photoCount, clipDuration: baseClipDuration } = calcPhotoTiming(allPhotos.length, durationSeconds);
     const photos = allPhotos.slice(0, photoCount);
-    console.log(`[pipeline] Using ${photos.length}/${allPhotos.length} photos at ${CLIP_DURATION}s each`);
+    // Beat-align clip duration to music track BPM
+    const earlyMusicPath = getMusicPath(style);
+    const trackStem = earlyMusicPath ? path.basename(earlyMusicPath, ".mp3") : null;
+    const trackBpm = trackStem ? TRACK_BPM[trackStem] : null;
+    const CLIP_DURATION = beatAlignedClipDuration(baseClipDuration, trackBpm);
+    if (trackBpm) console.log(`[pipeline] Beat-aligned clips: ${CLIP_DURATION.toFixed(2)}s @ ${trackBpm}bpm (base: ${baseClipDuration}s)`);
+    else console.log(`[pipeline] Using ${photos.length}/${allPhotos.length} photos at ${CLIP_DURATION}s each`);
 
     // Step 1: Download + preprocess photos + generate Ken Burns clips
     await updateProgress("Rendering cinematic motion", 25);

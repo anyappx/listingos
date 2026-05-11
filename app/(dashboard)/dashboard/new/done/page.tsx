@@ -10,13 +10,26 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
-  Download, Copy, Share2, QrCode, CheckCircle2, Loader2, ExternalLink, ArrowLeft
+  Download, Copy, Share2, QrCode, CheckCircle2, Loader2, ExternalLink, ArrowLeft, RefreshCw
 } from "lucide-react";
 import type { JobStatusComplete } from "@/lib/types";
 import { ContentPackView } from "@/components/dashboard/content-pack";
 import { VideoPlayer } from "@/components/dashboard/video-player";
 import { SocialPreviews } from "@/components/dashboard/social-previews";
+
+const MUSIC_TRACKS = [
+  { id: "track-01", label: "Modern Vibe (95 BPM)" },
+  { id: "track-02", label: "Upbeat Groove (120 BPM)" },
+  { id: "track-03", label: "Luxury Mood (85 BPM)" },
+  { id: "track-04", label: "Club Energy (128 BPM)" },
+  { id: "track-05", label: "Fresh Beat (110 BPM)" },
+  { id: "track-06", label: "Calm Flow (75 BPM)" },
+  { id: "track-07", label: "High Energy (140 BPM)" },
+  { id: "track-08", label: "Smooth Jazz (100 BPM)" },
+];
 
 function copyToClipboard(text: string, label = "Copied!") {
   navigator.clipboard.writeText(text).then(() => toast.success(label));
@@ -31,6 +44,43 @@ function DoneContent() {
   const [data, setData] = useState<JobStatusComplete | null>(null);
   const [loading, setLoading] = useState(true);
   const [showQR, setShowQR] = useState(false);
+  const [reEditMusic, setReEditMusic] = useState("");
+  const [reEditHeadline, setReEditHeadline] = useState("");
+  const [reediting, setReediting] = useState(false);
+  const [activeCover, setActiveCover] = useState<number>(0);
+
+  async function applyReedit(type: "music" | "headline", value: string) {
+    if (!listingId || !value.trim()) return;
+    setReediting(true);
+    try {
+      const res = await fetch(`/api/listings/${listingId}/reedit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(type === "music" ? { type: "music", musicTrackId: value } : { type: "headline", headline: value }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      toast.success(type === "music" ? "Music updated!" : "Headline updated!");
+    } catch (e) {
+      toast.error("Re-edit failed: " + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setReediting(false);
+    }
+  }
+
+  async function setCoverPhoto(thumbIdx: number, thumbUrl: string) {
+    if (!listingId) return;
+    setActiveCover(thumbIdx);
+    try {
+      await fetch(`/api/listings/${listingId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ coverUrl: thumbUrl }),
+      });
+      toast.success("Cover photo updated!");
+    } catch {
+      toast.error("Failed to update cover");
+    }
+  }
 
   useEffect(() => {
     if (!jobId) { router.push("/dashboard/new"); return; }
@@ -131,6 +181,108 @@ function DoneContent() {
           )}
         </div>
       </div>
+
+      {/* Extra formats: 1:1 and 4:5 */}
+      {(data.video.url1x1 || data.video.url4x5) && (
+        <div className="flex gap-3 mb-6">
+          {data.video.url1x1 && (
+            <Button variant="outline" onClick={() => window.open(data.video.url1x1, "_blank")}>
+              <Download className="w-4 h-4 mr-2" />Download 1:1 (Feed)
+            </Button>
+          )}
+          {data.video.url4x5 && (
+            <Button variant="outline" onClick={() => window.open(data.video.url4x5, "_blank")}>
+              <Download className="w-4 h-4 mr-2" />Download 4:5 (Portrait)
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* GIF preview */}
+      {data.video.gifUrl && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="text-sm">Animated GIF Preview</CardTitle>
+          </CardHeader>
+          <CardContent className="flex items-center gap-4">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={data.video.gifUrl} alt="Listing GIF" className="rounded-lg h-32 object-cover" />
+            <Button variant="outline" size="sm" onClick={() => window.open(data.video.gifUrl, "_blank")}>
+              <Download className="w-4 h-4 mr-2" />Download GIF
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Thumbnail selector */}
+      {data.video.selectorThumbnails && data.video.selectorThumbnails.length > 0 && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="text-sm">Choose Cover Thumbnail</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex gap-2 flex-wrap">
+              {data.video.selectorThumbnails.map((url, i) => (
+                <button
+                  key={i}
+                  onClick={() => setCoverPhoto(i, url)}
+                  className={`rounded-lg overflow-hidden border-2 transition-all ${activeCover === i ? "border-primary ring-2 ring-primary/30" : "border-border hover:border-primary/50"}`}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={url} alt={`Thumbnail ${i + 1}`} className="w-24 h-14 object-cover" />
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground mt-2">Click a frame to set as listing cover photo.</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Re-edit card */}
+      {listingId && (
+        <Card className="mb-8">
+          <CardHeader>
+            <CardTitle className="text-sm flex items-center gap-2">
+              <RefreshCw className="w-4 h-4" />
+              Not happy? Quick re-edit
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex gap-2 items-end">
+              <div className="flex-1">
+                <p className="text-xs text-muted-foreground mb-1">Swap music track</p>
+                <Select value={reEditMusic} onValueChange={(v) => setReEditMusic(v ?? "")}>
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="Pick a track…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MUSIC_TRACKS.map((t) => (
+                      <SelectItem key={t.id} value={t.id}>{t.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <Button size="sm" disabled={!reEditMusic || reediting} onClick={() => applyReedit("music", reEditMusic)}>
+                {reediting ? <Loader2 className="w-3 h-3 animate-spin" /> : "Apply"}
+              </Button>
+            </div>
+            <div className="flex gap-2 items-end">
+              <div className="flex-1">
+                <p className="text-xs text-muted-foreground mb-1">Change headline text</p>
+                <Input
+                  className="h-9 text-sm"
+                  placeholder="e.g. Luxury Living in Austin"
+                  value={reEditHeadline}
+                  onChange={(e) => setReEditHeadline(e.target.value)}
+                />
+              </div>
+              <Button size="sm" disabled={!reEditHeadline.trim() || reediting} onClick={() => applyReedit("headline", reEditHeadline)}>
+                {reediting ? <Loader2 className="w-3 h-3 animate-spin" /> : "Apply"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Social Previews */}
       {data.video.url16x9 && (

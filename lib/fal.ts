@@ -10,6 +10,10 @@ const MOTION_STRENGTHS: Record<VideoStyle, number> = {
   luxury: 0.5,
   energetic: 0.9,
   minimal: 0.4,
+  cinematic: 0.6,
+  coastal: 0.65,
+  desert: 0.55,
+  urban: 0.85,
 };
 
 interface FalClipResult {

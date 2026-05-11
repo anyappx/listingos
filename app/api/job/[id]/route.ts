@@ -63,22 +63,25 @@ export async function GET(
 
     // Dev mode: URLs are already absolute but may have stale port — rewrite to current origin
     // Production: sign R2 keys
-    let url16x9 = "";
-    let url9x16 = "";
-
-    if (isDevMode()) {
-      const origin = request.nextUrl.origin;
-      const rewrite = (u: string) => {
+    const resolveUrl = async (u: string | null | undefined): Promise<string> => {
+      if (!u) return "";
+      if (isDevMode()) {
+        const origin = request.nextUrl.origin;
         try { return u.replace(/^https?:\/\/[^/]+/, origin); } catch { return u; }
-      };
-      url16x9 = rewrite(video.url_16x9 || "");
-      url9x16 = rewrite(video.url_9x16 || "");
-    } else {
-      [url16x9, url9x16] = await Promise.all([
-        video.url_16x9 ? getSignedVideoUrl(video.url_16x9) : Promise.resolve(""),
-        video.url_9x16 ? getSignedVideoUrl(video.url_9x16) : Promise.resolve(""),
-      ]);
-    }
+      }
+      return getSignedVideoUrl(u);
+    };
+
+    const [url16x9, url9x16, url1x1, url4x5, gifUrl] = await Promise.all([
+      resolveUrl(video.url_16x9),
+      resolveUrl(video.url_9x16),
+      resolveUrl(video.url_1x1),
+      resolveUrl(video.url_4x5),
+      resolveUrl(video.gif_url),
+    ]);
+
+    const rawThumbs: string[] = Array.isArray(video.selector_thumbnails) ? video.selector_thumbnails : [];
+    const selectorThumbnails = await Promise.all(rawThumbs.map((u: string) => resolveUrl(u)));
 
     const shareUrl = `${process.env.NEXT_PUBLIC_APP_URL}/l/${listing.slug}`;
     const qrCodeUrl = await generateQRCode(shareUrl);
@@ -91,6 +94,10 @@ export async function GET(
         url9x16,
         thumbnailUrl: video.thumbnail_url || "",
         durationSeconds: video.duration_seconds || 30,
+        ...(gifUrl ? { gifUrl } : {}),
+        ...(selectorThumbnails.length ? { selectorThumbnails } : {}),
+        ...(url1x1 ? { url1x1 } : {}),
+        ...(url4x5 ? { url4x5 } : {}),
       },
       listing: {
         descriptionMls: listing.description_mls || "",

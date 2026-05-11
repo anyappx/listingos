@@ -103,9 +103,6 @@ export default function NewListingPage() {
   async function handleDemoFill() {
     setScraping(true);
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { toast.error("Please log in"); return; }
-
       const listingId = crypto.randomUUID();
       const slug = `demo-${listingId.slice(0, 8)}`;
 
@@ -118,24 +115,30 @@ export default function NewListingPage() {
         { url: "https://images.pexels.com/photos/3935350/pexels-photo-3935350.jpeg?w=1920", order: 5, is_cover: false },
       ];
 
-      const { error } = await supabase.from("listings").insert({
-        id: listingId,
-        user_id: user.id,
-        slug,
-        address: "742 Evergreen Terrace",
-        city: "Austin",
-        state: "TX",
-        zip: "78701",
-        price: 485000,
-        beds: 3,
-        baths: 2,
-        sqft: 1842,
-        raw_description: "Charming 3-bedroom home in the heart of Austin with modern finishes, open floor plan, and a beautifully landscaped backyard.",
-        source_url: null,
-        photos: demoPhotos,
+      const createRes = await fetch("/api/listings/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: listingId,
+          slug,
+          address: "742 Evergreen Terrace",
+          city: "Austin",
+          state: "TX",
+          zip: "78701",
+          price: 485000,
+          beds: 3,
+          baths: 2,
+          sqft: 1842,
+          raw_description: "Charming 3-bedroom home in the heart of Austin with modern finishes, open floor plan, and a beautifully landscaped backyard.",
+          source_url: null,
+          photos: demoPhotos,
+        }),
       });
-
-      if (error) { toast.error("Failed to create demo: " + error.message); return; }
+      if (!createRes.ok) {
+        const e = await createRes.json() as { error?: string };
+        toast.error("Failed to create demo: " + (e.error ?? "unknown error"));
+        return;
+      }
 
       setListing({
         listingId, address: "742 Evergreen Terrace", city: "Austin",
@@ -166,24 +169,19 @@ export default function NewListingPage() {
 
       // If no listing yet, create one on-the-fly for manual uploads
       if (!currentListing) {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) { toast.error("Please log in"); return; }
-
         const listingId = crypto.randomUUID();
         const slug = `upload-${listingId.slice(0, 8)}`;
 
-        const { error } = await supabase.from("listings").insert({
-          id: listingId,
-          user_id: user.id,
-          slug,
-          address: "",
-          city: "",
-          state: "",
-          zip: "",
-          photos: [],
+        const createRes = await fetch("/api/listings/create", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: listingId, slug, address: "", city: "", state: "", zip: "", photos: [] }),
         });
-
-        if (error) { toast.error("Failed to create listing: " + error.message); return; }
+        if (!createRes.ok) {
+          const e = await createRes.json() as { error?: string };
+          toast.error("Failed to create listing: " + (e.error ?? "unknown error"));
+          return;
+        }
 
         currentListing = {
           listingId, address: "", city: "",
