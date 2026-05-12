@@ -36,15 +36,17 @@ export interface ScrapedData {
   warnings?: { photoIndex: number; warning: string }[];
 }
 
-// ─── Playwright — uses rebrowser-playwright to patch CDP Runtime.enable leak ──
-// rebrowser-playwright patches the Runtime.enable CDP call that PerimeterX detects.
-// Strategy: navigate to site root first (lets PerimeterX initialize), then listing.
+// ─── Playwright — playwright-extra + stealth plugin for maximum bypass ────────
+// Uses stealth plugin (puppeteer-extra-plugin-stealth) which patches 20+ detection
+// vectors: navigator.webdriver, chrome object, plugins, canvas, etc.
+// Strategy: navigate to site root first (lets bot-protection JS initialize), then listing.
 async function playwrightFetch(
   urls: string[],  // [warmupUrl, targetUrl] — navigate in sequence
   waitMs = 3000    // pause after warmup for bot-protection JS to run
 ): Promise<string> {
-  // Use rebrowser-playwright — patches CDP Runtime.enable leak that PerimeterX detects
-  const { chromium } = await import("rebrowser-playwright");
+  const { chromium } = await import("playwright-extra");
+  const StealthPlugin = (await import("puppeteer-extra-plugin-stealth")).default;
+  chromium.use(StealthPlugin());
 
   // Try system Chrome first, fall back to bundled Chromium
   const executablePaths = [
@@ -69,7 +71,7 @@ async function playwrightFetch(
       "--disable-blink-features=AutomationControlled",
       "--disable-features=IsolateOrigins,site-per-process",
     ],
-  });
+  } as Parameters<typeof chromium.launch>[0]);
 
   try {
     const context = await browser.newContext({
@@ -77,14 +79,6 @@ async function playwrightFetch(
       viewport: { width: 1366, height: 768 },
       locale: "en-US",
       timezoneId: "America/New_York",
-    });
-
-    // Patch automation signals
-    await context.addInitScript(() => {
-      delete (Object.getPrototypeOf(navigator) as Record<string, unknown>).webdriver;
-      (window as unknown as Record<string, unknown>).chrome = { runtime: {} };
-      Object.defineProperty(navigator, "plugins", { get: () => [1, 2, 3] });
-      Object.defineProperty(navigator, "languages", { get: () => ["en-US", "en"] });
     });
 
     const page = await context.newPage();

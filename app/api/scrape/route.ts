@@ -79,8 +79,9 @@ export async function POST(request: NextRequest) {
       scraped = await scrapeUrl(url);
     } catch (scrapeErr) {
       console.error("[/api/scrape] scrapeUrl failed:", scrapeErr);
+      const msg = scrapeErr instanceof Error ? scrapeErr.message : "Could not extract listing data";
       return NextResponse.json(
-        { error: "Could not extract listing data", fallback: "manual_upload" },
+        { error: msg, fallback: "manual_upload" },
         { status: 422 }
       );
     }
