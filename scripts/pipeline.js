@@ -258,14 +258,25 @@ function concatWithXfade(clipPaths, durations, outputPath, targetSeconds) {
 }
 
 // ─── M2: Intro title card ─────────────────────────────────────────────────────
+function darkenColor(hex) {
+  const h = (hex || "#1A2E4A").replace(/^#/, "");
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `#${Math.min(r, 40).toString(16).padStart(2, "0")}${Math.min(g, 40).toString(16).padStart(2, "0")}${Math.min(b, 60).toString(16).padStart(2, "0")}`;
+}
+
+function capitalizeName(name) {
+  return (name || "").split(" ").map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+}
+
 async function createIntroCard(listing, brand, outputPath) {
   const sharp = require("sharp");
   const address = listing.address || "Premier Property";
-  const city = listing.city ? `${listing.city}${listing.state ? ", " + listing.state : ""}` : "";
   const price = listing.price ? `$${Number(listing.price).toLocaleString()}` : "";
-  const primaryColor = brand?.primary_color || "#1A2E4A";
+  const bgColor = darkenColor(brand?.primary_color || "#1A2E4A");
   const accentColor = brand?.accent_color || "#2563eb";
-  const agentName = brand?.agent_name || "";
+  const agentName = capitalizeName(brand?.agent_name || "");
   const brokerage = brand?.brokerage || "";
 
   // Center all text around W/2=960 so it's visible in both 16:9 AND 9:16 crop (safe zone x=656-1263)
@@ -273,7 +284,7 @@ async function createIntroCard(listing, brand, outputPath) {
   const svg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="${primaryColor}"/>
+      <stop offset="0%" stop-color="${bgColor}"/>
       <stop offset="100%" stop-color="#0a0a0a"/>
     </linearGradient>
     <radialGradient id="glow" cx="50%" cy="50%" r="60%">
@@ -290,13 +301,10 @@ async function createIntroCard(listing, brand, outputPath) {
   <!-- Decorative line -->
   <rect x="${cx - 40}" y="${H / 2 - 160}" width="80" height="4" fill="${accentColor}" rx="2"/>
   <!-- Address line -->
-  <text x="${cx}" y="${H / 2 - 40}" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="800"
+  <text x="${cx}" y="${H / 2 - 10}" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="800"
         fill="white" text-anchor="middle" letter-spacing="-1">${escapeXml(address)}</text>
-  <!-- City/State -->
-  ${city ? `<text x="${cx}" y="${H / 2 + 30}" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="400"
-        fill="rgba(255,255,255,0.75)" text-anchor="middle">${escapeXml(city)}</text>` : ""}
   <!-- Price -->
-  ${price ? `<text x="${cx}" y="${H / 2 + 100}" font-family="Arial, Helvetica, sans-serif" font-size="52" font-weight="700"
+  ${price ? `<text x="${cx}" y="${H / 2 + 80}" font-family="Arial, Helvetica, sans-serif" font-size="52" font-weight="700"
         fill="${accentColor}" text-anchor="middle">${escapeXml(price)}</text>` : ""}
   <!-- Agent credit -->
   ${agentName ? `<text x="${cx}" y="${H - 60}" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="400"
@@ -383,7 +391,7 @@ async function createLowerThirdPng(address, agentName, price, outputPath) {
   const sharp = require("sharp");
   const priceStr = price ? `$${Number(price).toLocaleString()}` : "";
   const line1 = address || "Premier Property";
-  const line2 = [agentName, priceStr].filter(Boolean).join("  ·  ");
+  const line2 = [capitalizeName(agentName), priceStr].filter(Boolean).join("  ·  ");
 
   // Center lower-third around W/2=960 so it shows in 9:16 crop (safe zone x=656-1263)
   const cx = W / 2;
@@ -432,9 +440,9 @@ function overlayAnimatedLowerThird(videoPath, lowerThirdPng, slideInAt, fadeOutA
 // ─── M5: Outro CTA card ───────────────────────────────────────────────────────
 async function createOutroCard(brand, headshotPath, outputPath) {
   const sharp = require("sharp");
-  const primaryColor = brand?.primary_color || "#1A2E4A";
+  const bgColor = darkenColor(brand?.primary_color || "#1A2E4A");
   const accentColor = brand?.accent_color || "#2563eb";
-  const agentName = brand?.agent_name || "Your Agent";
+  const agentName = capitalizeName(brand?.agent_name || "Your Agent");
   const phone = brand?.phone || "";
   const brokerage = brand?.brokerage || "";
 
@@ -467,7 +475,7 @@ async function createOutroCard(brand, headshotPath, outputPath) {
   const svg = `<svg width="${W}" height="${H}" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <radialGradient id="bg" cx="50%" cy="50%" r="70%">
-      <stop offset="0%" stop-color="${primaryColor}"/>
+      <stop offset="0%" stop-color="${bgColor}"/>
       <stop offset="100%" stop-color="#080808"/>
     </radialGradient>
   </defs>
@@ -604,7 +612,7 @@ function cropTo9x16(inputPath, outputPath) {
     ffmpegLib(inputPath)
       .videoFilter("crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:1920")
       .outputOptions([
-        "-c:v libx264", "-preset fast", "-crf 18", "-pix_fmt yuv420p",
+        "-c:v libx264", "-preset fast", "-crf 23", "-pix_fmt yuv420p",
         "-c:a copy", "-movflags +faststart",
       ])
       .output(outputPath)
@@ -616,7 +624,7 @@ function cropTo1x1(inputPath, outputPath) {
   return ffrun(
     ffmpegLib(inputPath)
       .videoFilter("crop=ih:ih:(iw-ih)/2:0,scale=1080:1080")
-      .outputOptions(["-c:v libx264", "-preset fast", "-crf 18", "-pix_fmt yuv420p", "-c:a copy", "-movflags +faststart"])
+      .outputOptions(["-c:v libx264", "-preset fast", "-crf 23", "-pix_fmt yuv420p", "-c:a copy", "-movflags +faststart"])
       .output(outputPath)
   );
 }
@@ -626,7 +634,7 @@ function cropTo4x5(inputPath, outputPath) {
   return ffrun(
     ffmpegLib(inputPath)
       .videoFilter("crop=iw:iw*5/4:(iw-iw)/2:(ih-iw*5/4)/2,scale=1080:1350")
-      .outputOptions(["-c:v libx264", "-preset fast", "-crf 18", "-pix_fmt yuv420p", "-c:a copy", "-movflags +faststart"])
+      .outputOptions(["-c:v libx264", "-preset fast", "-crf 23", "-pix_fmt yuv420p", "-c:a copy", "-movflags +faststart"])
       .output(outputPath)
   );
 }
@@ -715,7 +723,7 @@ function applyCinemaGrade(inputPath, outputPath) {
       ])
       .outputOptions([
         "-map [vout]", "-map 0:a?",
-        "-c:v libx264", "-preset fast", "-crf 18", "-pix_fmt yuv420p",
+        "-c:v libx264", "-preset fast", "-crf 23", "-pix_fmt yuv420p",
         "-c:a copy", "-movflags +faststart",
       ])
       .output(outputPath)
@@ -972,7 +980,7 @@ async function run() {
                 `[1:v]scale=400:-1[wm]`,
                 `[0:v][wm]overlay=W-w-40:H-h-40[vout]`,
               ])
-              .outputOptions(["-map [vout]", "-map 0:a?", "-c:v libx264", "-preset fast", "-crf 18", "-pix_fmt yuv420p", "-c:a copy", "-movflags +faststart"])
+              .outputOptions(["-map [vout]", "-map 0:a?", "-c:v libx264", "-preset fast", "-crf 23", "-pix_fmt yuv420p", "-c:a copy", "-movflags +faststart"])
               .output(wmOutPath)
           );
           withWatermarkPath = wmOutPath;

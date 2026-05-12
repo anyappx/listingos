@@ -17,6 +17,11 @@ import numpy as np
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "models", "depth_anything_v2_vits.onnx")
 
+# Use ffmpeg-static from node_modules if system ffmpeg not available
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+_ffmpeg_static = os.path.join(_script_dir, "..", "node_modules", "ffmpeg-static", "ffmpeg")
+FFMPEG_BIN = _ffmpeg_static if os.path.isfile(_ffmpeg_static) else "ffmpeg"
+
 
 def load_depth_session():
     import onnxruntime as ort
@@ -154,7 +159,7 @@ def render_parallax(
         frame = frame[cy_off:cy_off + height, cx_off:cx_off + width]
 
         # FIX I: Depth-of-field — blur background proportional to inverse depth
-        depth_crop = depth[cy_off:cy_off + height, cx_off:cx_off + width]
+        depth_crop = render_depth[cy_off:cy_off + height, cx_off:cx_off + width]
         for sigma in [1, 2, 4]:
             blurred = cv2.GaussianBlur(frame, (0, 0), sigma)
             mask = ((1.0 - depth_crop) > sigma * 0.25).astype(np.float32)[..., np.newaxis]
@@ -168,7 +173,7 @@ def render_parallax(
     raw = output_path + ".raw.mp4"
     os.rename(output_path, raw)
     subprocess.run(
-        ["ffmpeg", "-y", "-i", raw,
+        [FFMPEG_BIN, "-y", "-i", raw,
          "-c:v", "libx264", "-preset", "fast", "-crf", "18",
          "-pix_fmt", "yuv420p", "-an", output_path],
         check=True, capture_output=True,
