@@ -298,7 +298,7 @@ export default function NewListingPage() {
 
       <h1 className="text-2xl font-bold mb-2">Import your listing</h1>
       <p className="text-muted-foreground mb-8">
-        Paste a Zillow, Redfin, or Realtor.com URL to import automatically, or upload photos manually.
+        Works best with Realtor.com · Also supports Redfin and Zillow
       </p>
 
       {/* URL input */}
@@ -307,7 +307,7 @@ export default function NewListingPage() {
           <Link2 className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             type="url"
-            placeholder="https://www.zillow.com/homes/..."
+            placeholder="https://www.realtor.com/realestateandhomes-detail/..."
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             className="pl-9"

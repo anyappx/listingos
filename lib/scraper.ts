@@ -32,6 +32,7 @@ export interface ScrapedData {
   sqft: number | null;
   description: string;
   photoUrls: string[];
+  source?: string;
   warnings?: { photoIndex: number; warning: string }[];
 }
 
@@ -459,75 +460,109 @@ async function scrapeRedfin(url: string): Promise<ScrapedData> {
   return data;
 }
 
-// ─── Realtor.com ──────────────────────────────────────────────────────────────
+// ─── Realtor.com — pure HTTP GET, no browser needed ──────────────────────────
 
 async function scrapeRealtor(url: string): Promise<ScrapedData> {
-  // Use Playwright — Realtor.com rate-limits got-scraping and curl
-  const html = await playwrightFetch(
-    ["https://www.realtor.com/", url],
-    2000
-  );
+  const html = await gotFetch(url, "https://www.realtor.com/");
 
   const $ = cheerio.load(html);
 
-  let ld: Record<string, unknown> = {};
-  const m = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>({.+?})<\/script>/s);
-  if (m) {
-    try {
-      const nd = JSON.parse(m[1]);
-      const pp = (nd?.props as Record<string, unknown>)?.pageProps as Record<string, unknown>;
-      ld = ((pp?.data as Record<string, unknown>)?.home as Record<string, unknown>) || {};
-    } catch {}
-  }
+  // Extract __NEXT_DATA__ JSON blob
+  const m = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+  if (!m) throw new Error("Could not find listing data on Realtor.com page");
 
-  const location = (ld.location as Record<string, unknown>) || {};
+  let nd: Record<string, unknown> = {};
+  try { nd = JSON.parse(m[1]); } catch { throw new Error("Failed to parse Realtor.com JSON"); }
+
+  const pp = (nd?.props as Record<string, unknown>)?.pageProps as Record<string, unknown>;
+
+  // Try multiple JSON paths — Realtor.com uses different structures across listing types
+  const property =
+    (pp?.property as Record<string, unknown>) ||
+    ((pp?.data as Record<string, unknown>)?.home as Record<string, unknown>) ||
+    ((pp?.initialReduxState as Record<string, unknown>)?.propertyDetails as Record<string, unknown>)?.listingDetail as Record<string, unknown> ||
+    ((pp?.componentProps as Record<string, unknown>)?.propertyData as Record<string, unknown>) ||
+    ((pp?.propertyData as Record<string, unknown>)) ||
+    {} as Record<string, unknown>;
+
+  // Address
+  const location = (property.location as Record<string, unknown>) || {};
   const addrBlock = (location.address as Record<string, string>) || {};
-  const address = $('[data-testid="street-address"]').text().trim() || addrBlock.line || "";
-  const city = $('[data-testid="city"]').text().trim() || addrBlock.city || "";
-  const state = $('[data-testid="state"]').text().trim() || addrBlock.state_code || "";
-  const zip = $('[data-testid="postal-code"]').text().trim() || addrBlock.postal_code || "";
+  const address =
+    addrBlock.line ||
+    $('[data-testid="street-address"]').text().trim() ||
+    "";
+  const city =
+    addrBlock.city ||
+    $('[data-testid="city"]').text().trim() ||
+    "";
+  const state =
+    addrBlock.state_code ||
+    $('[data-testid="state"]').text().trim() ||
+    "";
+  const zip =
+    addrBlock.postal_code ||
+    $('[data-testid="postal-code"]').text().trim() ||
+    "";
 
-  const listPrice = (ld.list_price as number) || 0;
-  const priceText =
-    $('[data-testid="list-price"]').text() ||
-    $(".price-section").text() ||
-    String(listPrice);
-  const price = parsePrice(priceText) || (listPrice > 0 ? listPrice : null);
-
-  const details = (ld.description as Record<string, unknown>) || {};
-  const beds =
-    parseNumber(String(details.beds || "")) ??
-    parseNumber($('[data-testid="beds"]').text());
-  const baths =
-    parseNumber(String(details.baths_consolidated || details.baths || "")) ??
-    parseNumber($('[data-testid="baths"]').text());
-  const sqft =
-    parseNumber(String(details.sqft || "")) ??
-    parseNumber($('[data-testid="sqft"]').text());
+  // Listing details
+  const details = (property.description as Record<string, unknown>) || {};
+  const listPrice = (property.list_price as number) || (details.list_price as number) || 0;
+  const price = listPrice > 0 ? listPrice : parsePrice($('[data-testid="list-price"]').text());
+  const beds = parseNumber(String(details.beds || property.beds || "")) ?? parseNumber($('[data-testid="beds"]').text());
+  const baths = parseNumber(String(details.baths_consolidated || details.baths || property.baths || "")) ?? parseNumber($('[data-testid="baths"]').text());
+  const sqft = parseNumber(String(details.sqft || property.sqft || "")) ?? parseNumber($('[data-testid="sqft"]').text());
   const description =
+    (details.text as string) ||
+    (property.description_text as string) ||
+    (property.remarks as string) ||
     $('[data-testid="listing-description"]').text().trim() ||
-    (ld.description as Record<string, string>)?.text || "";
+    "";
 
-  // Photos: rdcpix.com URLs from nextData recursion + HTML
+  // Photos — recursively find all rdcpix.com hrefs in the JSON tree,
+  // then normalise to full-resolution ("-o" suffix = original size)
   const photoSet = new Set<string>();
+
   function findRealtorPhotos(obj: unknown) {
     if (!obj || typeof obj !== "object") return;
     if (Array.isArray(obj)) { obj.forEach(findRealtorPhotos); return; }
     const rec = obj as Record<string, unknown>;
     if (typeof rec.href === "string" && rec.href.includes("rdcpix.com")) {
-      photoSet.add(rec.href.replace(/[?&](w|h|width|height)=\d+/g, ""));
+      // Normalise to full-res: replace any size suffix (-s, -m, -l, -t…) with -o
+      const fullRes = rec.href
+        .replace(/[?&](w|h|width|height)=\d+/g, "")
+        .replace(/-[a-z]\d*\.jpg/i, "-o.jpg");
+      photoSet.add(fullRes);
     }
     Object.values(rec).forEach(findRealtorPhotos);
   }
-  if (m) {
-    try { findRealtorPhotos(JSON.parse(m[1])); } catch {}
-  }
+
+  try { findRealtorPhotos(nd); } catch {}
+
+  // Also pick up any rdcpix images rendered in HTML
   $('img[src*="rdcpix.com"]').each((_, el) => {
     const src = $(el).attr("src");
-    if (src) photoSet.add(src);
+    if (src) photoSet.add(src.replace(/-[a-z]\d*\.jpg/i, "-o.jpg"));
   });
 
-  return { address, city, state, zip, price, beds, baths, sqft, description, photoUrls: [...photoSet] };
+  if (!address && photoSet.size === 0) {
+    throw new Error("Could not extract property data from Realtor.com — page structure may have changed");
+  }
+
+  return {
+    address,
+    city,
+    state,
+    zip,
+    price,
+    beds,
+    baths,
+    sqft,
+    description,
+    photoUrls: [...photoSet],
+    source: "realtor.com",
+    warnings: [],
+  };
 }
 
 // ─── Street suffix set ────────────────────────────────────────────────────────
@@ -559,6 +594,22 @@ function parseZillowUrl(url: string): Partial<ScrapedData> {
 // ─── Public entry point ───────────────────────────────────────────────────────
 
 export async function scrapeUrl(url: string): Promise<ScrapedData> {
+  // Priority: Realtor.com (no browser) → Redfin → Zillow (last resort)
+  if (url.includes("realtor.com")) {
+    try {
+      return await scrapeRealtor(url);
+    } catch (err) {
+      console.warn("[scraper] Realtor.com scrape failed:", err);
+      throw new Error(
+        "Could not import from Realtor.com. Try a Redfin URL instead, or upload photos manually."
+      );
+    }
+  }
+
+  if (url.includes("redfin.com")) {
+    return await scrapeRedfin(url);
+  }
+
   if (url.includes("zillow.com")) {
     try {
       return await scrapeZillow(url);
@@ -578,29 +629,12 @@ export async function scrapeUrl(url: string): Promise<ScrapedData> {
         };
       }
       throw new Error(
-        "Zillow blocked this request. Try a Redfin URL instead, or upload photos manually."
+        "Zillow blocked this request. Try a Realtor.com or Redfin URL instead, or upload photos manually."
       );
     }
   }
 
-  if (url.includes("redfin.com")) {
-    return await scrapeRedfin(url);
-  }
-
-  if (url.includes("realtor.com")) {
-    try {
-      return await scrapeRealtor(url);
-    } catch (err) {
-      console.warn("[scraper] Realtor.com scrape failed:", err);
-      return {
-        address: "", city: "", state: "", zip: "",
-        price: null, beds: null, baths: null, sqft: null,
-        description: "", photoUrls: [],
-      };
-    }
-  }
-
-  throw new Error("Unsupported domain");
+  throw new Error("Unsupported domain. Paste a Realtor.com, Redfin, or Zillow URL.");
 }
 
 // ─── Photo storage ────────────────────────────────────────────────────────────
