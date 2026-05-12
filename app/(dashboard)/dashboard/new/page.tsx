@@ -22,7 +22,6 @@ import {
   Sparkles,
 } from "lucide-react";
 import type { ListingPhoto } from "@/lib/types";
-import { createClient } from "@/lib/supabase/client";
 
 
 interface ListingData {
@@ -39,7 +38,6 @@ interface ListingData {
 
 export default function NewListingPage() {
   const router = useRouter();
-  const supabase = createClient();
 
   const [url, setUrl] = useState("");
   const [scraping, setScraping] = useState(false);
@@ -194,24 +192,33 @@ export default function NewListingPage() {
       }
 
       const newPhotos: ListingPhoto[] = [];
+      let failCount = 0;
       for (let i = 0; i < acceptedFiles.length; i++) {
         const file = acceptedFiles[i];
-        const storagePath = `listings/${currentListing.listingId}/photos/${Date.now()}-${i}.jpg`;
-        const { error } = await supabase.storage
-          .from("listing-photos")
-          .upload(storagePath, file, { contentType: file.type, upsert: true });
-        if (error) continue;
-        const { data: { publicUrl } } = supabase.storage
-          .from("listing-photos")
-          .getPublicUrl(storagePath);
-        newPhotos.push({ url: publicUrl, order: photos.length + i, is_cover: false });
+        const fd = new FormData();
+        fd.append("file", file);
+        fd.append("listingId", currentListing.listingId);
+        const res = await fetch("/api/upload", { method: "POST", body: fd });
+        if (!res.ok) {
+          const e = await res.json() as { error?: string };
+          console.error("[upload] photo failed:", e.error);
+          failCount++;
+          continue;
+        }
+        const { url } = await res.json() as { url: string };
+        newPhotos.push({ url, order: photos.length + i, is_cover: false });
       }
       setPhotos((prev) => [...prev, ...newPhotos]);
-      toast.success(`${newPhotos.length} photos added`);
+      if (newPhotos.length > 0) {
+        toast.success(`${newPhotos.length} photo${newPhotos.length === 1 ? "" : "s"} added`);
+      }
+      if (failCount > 0) {
+        toast.error(`${failCount} photo${failCount === 1 ? "" : "s"} failed to upload — check your connection`);
+      }
     } finally {
       setUploadingPhotos(false);
     }
-  }, [listing, photos, supabase]);
+  }, [listing, photos]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,

@@ -13,16 +13,7 @@ export async function PATCH(
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  // Verify ownership
-  const { data: listing } = await adminSupabase
-    .from("listings")
-    .select("id")
-    .eq("id", id)
-    .eq("user_id", user.id)
-    .single();
-
-  if (!listing) return NextResponse.json({ error: "Not found" }, { status: 404 });
-
+  // Validate input BEFORE checking listing ownership (400 before 404)
   let body: unknown;
   try { body = await request.json(); } catch {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
@@ -32,6 +23,16 @@ export async function PATCH(
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message }, { status: 400 });
   }
+
+  // Verify ownership after input is validated
+  const { data: listing } = await adminSupabase
+    .from("listings")
+    .select("id")
+    .eq("id", id)
+    .eq("user_id", user.id)
+    .single();
+
+  if (!listing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const updates: Record<string, unknown> = {};
   if (parsed.data.descriptionMls !== undefined) updates.description_mls = parsed.data.descriptionMls;

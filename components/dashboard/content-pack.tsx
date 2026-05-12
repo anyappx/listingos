@@ -141,7 +141,7 @@ export function ContentPackView({ listingId, initialPack }: ContentPackViewProps
           <p className="text-xs text-muted-foreground mb-3">
             Scroll-stopping hooks for Reels &amp; TikTok. Tap to copy.
           </p>
-          {pack.hooks.map((hook, i) => (
+          {(pack.hooks ?? []).map((hook, i) => (
             <div
               key={i}
               className="flex items-start justify-between gap-2 rounded-lg border p-3 hover:bg-muted/50 transition-colors"
@@ -157,7 +157,7 @@ export function ContentPackView({ listingId, initialPack }: ContentPackViewProps
           <p className="text-xs text-muted-foreground mb-3">
             6-scene shot-by-shot script for your video walkthrough.
           </p>
-          {pack.shotList.map((scene: ShotScene) => (
+          {(pack.shotList ?? []).map((scene: ShotScene) => (
             <Card key={scene.sceneNumber} className="overflow-hidden">
               <CardHeader className="py-2 px-4 bg-muted/40 flex-row items-center justify-between space-y-0">
                 <CardTitle className="text-xs font-medium">
@@ -186,7 +186,7 @@ export function ContentPackView({ listingId, initialPack }: ContentPackViewProps
           <p className="text-xs text-muted-foreground mb-3">
             5 ready-to-post caption styles. Mix and match per platform.
           </p>
-          {Object.entries(pack.captionStyles).map(([style, text]) => (
+          {Object.entries(pack.captionStyles ?? {}).map(([style, text]) => (
             <div key={style} className="rounded-lg border p-3 space-y-1.5">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium capitalize text-muted-foreground">
@@ -204,7 +204,7 @@ export function ContentPackView({ listingId, initialPack }: ContentPackViewProps
           <p className="text-xs text-muted-foreground mb-3">
             Platform-optimised posts ready to paste.
           </p>
-          {Object.entries(pack.platformPosts).map(([platform, text]) => {
+          {Object.entries(pack.platformPosts ?? {}).map(([platform, text]) => {
             const icons: Record<string, string> = {
               instagram: "📸",
               tiktok: "🎵",
@@ -234,7 +234,7 @@ export function ContentPackView({ listingId, initialPack }: ContentPackViewProps
           <p className="text-xs text-muted-foreground mb-3">
             Questions that drive comments, saves, and shares.
           </p>
-          {pack.engagementQuestions.map((q, i) => (
+          {(pack.engagementQuestions ?? []).map((q, i) => (
             <div
               key={i}
               className="flex items-start justify-between gap-2 rounded-lg border p-3 hover:bg-muted/50 transition-colors"

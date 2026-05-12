@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
     // Fetch listing — if service call, skip user_id filter
     const query = admin
       .from("listings")
-      .select("*, users(voice_profile)")
+      .select("*")
       .eq("id", listingId);
 
     if (userId) {
@@ -58,6 +58,7 @@ export async function POST(request: NextRequest) {
     const { data: listing, error: fetchErr } = await query.single();
 
     if (fetchErr || !listing) {
+      console.error(`[api/content/pack] Listing not found: ${fetchErr?.message}`);
       return NextResponse.json({ error: "Listing not found" }, { status: 404 });
     }
 
@@ -85,7 +86,7 @@ export async function POST(request: NextRequest) {
         : undefined,
       style: listing.style || "modern",
       agentName: listing.agent_name || undefined,
-      voiceProfile: listing.users?.voice_profile || undefined,
+      voiceProfile: undefined,
     });
 
     if (!contentPack) {

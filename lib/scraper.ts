@@ -364,45 +364,46 @@ async function scrapeZillow(url: string): Promise<ScrapedData> {
 // ─── Redfin ───────────────────────────────────────────────────────────────────
 
 function extractRedfinPhotos(html: string): string[] {
-  // Redfin: ssl.cdn-redfin.com/photo/{id}/bigphoto/{seq}/{mlsId_N}.jpg
   const photoSet = new Set<string>();
-  const re = /https?:\/\/ssl\.cdn-redfin\.com\/photo\/[^\s"']+bigphoto[^\s"']+\.jpg/gi;
+
+  // Unescape JSON-encoded forward slashes so regex can match both forms
+  const src = html.replace(/\\\//g, "/");
+
+  // Capture ALL cdn-redfin photo URL variants (bigphoto, isphoto, thumbphoto, etc.)
+  const re = /https?:\/\/ssl\.cdn-redfin\.com\/photo\/[^\s"'<>]+\.(?:jpg|jpeg|png|webp)/gi;
   let m;
-  while ((m = re.exec(html)) !== null) {
+  while ((m = re.exec(src)) !== null) {
     photoSet.add(m[0].split("?")[0]);
   }
-  return [...photoSet];
+
+  const allUrls = [...photoSet];
+  // Prefer highest-quality variants in order: bigphoto > isphoto > others (excluding thumbs)
+  const bigPhotos = allUrls.filter(u => u.includes("/bigphoto/"));
+  if (bigPhotos.length > 0) return bigPhotos;
+  const isPhotos = allUrls.filter(u => u.includes("/isphoto/"));
+  if (isPhotos.length > 0) return isPhotos;
+  return allUrls.filter(u => !u.includes("thumb"));
 }
 
-async function scrapeRedfin(url: string): Promise<ScrapedData> {
-  // got-scraping works for Redfin (generates Chrome-compatible TLS fingerprint)
-  const html = await gotFetch(url, "https://www.redfin.com/");
-
+function parseRedfinHtml(html: string): Omit<ScrapedData, "warnings"> {
   const $ = cheerio.load(html);
 
-  // Street address: "17 Town Farm Rd" part
   const streetLine =
     $('[data-rf-test-id="abp-streetLine"]').text().trim() ||
     $(".street-address").text().trim() || "";
 
-  // City, state, zip: from the abp-cityStateZip element OR parsed from page title
   let city = "", state = "", zip = "";
   const csz = $('[data-rf-test-id="abp-cityStateZip"]').text().trim();
   if (csz) {
-    // Format: "Winchendon, MA 01475"
     const cszMatch = csz.match(/^(.+?),\s*([A-Z]{2})\s+(\d{5})?/);
     if (cszMatch) { city = cszMatch[1]; state = cszMatch[2]; zip = cszMatch[3] || ""; }
   }
-
-  // Fallback: parse from <title> "17 Town Farm Rd, Winchendon, MA 01475 | ..."
   if (!city) {
     const title = $("title").text();
     const titleMatch = title.match(/,\s*([^,]+),\s*([A-Z]{2})\s+(\d{5})/);
     if (titleMatch) { city = titleMatch[1].trim(); state = titleMatch[2]; zip = titleMatch[3]; }
   }
 
-  // Full address — abp-streetLine sometimes returns full "17 Town Farm Rd, City, ST ZIP"
-  // If it already has city/state, use as-is; otherwise combine with city/state/zip
   const hasFullAddress = streetLine.includes(",") && /[A-Z]{2}\s+\d{5}/.test(streetLine);
   const address = hasFullAddress
     ? streetLine
@@ -416,27 +417,46 @@ async function scrapeRedfin(url: string): Promise<ScrapedData> {
     $(".price .value").text() || "";
   const price = parsePrice(priceText);
 
-  const bedsText =
+  const beds = parseNumber(
     $('[data-rf-test-id="abp-beds"] .statsValue').text() ||
-    $('[data-rf-test-id="abp-beds"]').text() || "";
-  const bathsText =
+    $('[data-rf-test-id="abp-beds"]').text() || ""
+  );
+  const baths = parseNumber(
     $('[data-rf-test-id="abp-baths"] .statsValue').text() ||
-    $('[data-rf-test-id="abp-baths"]').text() || "";
-  const sqftText =
+    $('[data-rf-test-id="abp-baths"]').text() || ""
+  );
+  const sqft = parseNumber(
     $('[data-rf-test-id="abp-sqFt"] .statsValue').text() ||
-    $('[data-rf-test-id="abp-sqFt"]').text() || "";
-
-  const beds = parseNumber(bedsText);
-  const baths = parseNumber(bathsText);
-  const sqft = parseNumber(sqftText);
-
+    $('[data-rf-test-id="abp-sqFt"]').text() || ""
+  );
   const description =
     $(".remarks").text().trim() ||
     $(".listing-remarks").text().trim() || "";
 
   const photoUrls = extractRedfinPhotos(html);
-
   return { address, city, state, zip, price, beds, baths, sqft, description, photoUrls };
+}
+
+async function scrapeRedfin(url: string): Promise<ScrapedData> {
+  // Layer 1: got-scraping (fast, no browser — Chrome TLS fingerprint)
+  try {
+    const html = await gotFetch(url, "https://www.redfin.com/");
+    const data = parseRedfinHtml(html);
+    if (data.photoUrls.length > 0 || data.address) {
+      console.log(`[scraper] Redfin got-scraping: ${data.photoUrls.length} photos, address="${data.address}"`);
+      return data;
+    }
+    throw new Error("got-scraping returned no photos and no address");
+  } catch (e) {
+    console.warn("[scraper] Redfin got-scraping failed:", (e as Error).message);
+  }
+
+  // Layer 2: Playwright fallback with homepage warmup
+  console.log("[scraper] Redfin falling back to Playwright...");
+  const html = await playwrightFetch(["https://www.redfin.com/", url], 2000);
+  const data = parseRedfinHtml(html);
+  console.log(`[scraper] Redfin Playwright: ${data.photoUrls.length} photos, address="${data.address}"`);
+  return data;
 }
 
 // ─── Realtor.com ──────────────────────────────────────────────────────────────

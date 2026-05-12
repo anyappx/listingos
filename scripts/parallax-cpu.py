@@ -11,7 +11,6 @@ Intensity: float, 0.3 (subtle) to 2.0 (dramatic). Default 1.0
 """
 import sys
 import os
-import subprocess
 import cv2
 import numpy as np
 
@@ -171,17 +170,6 @@ def render_parallax(
         writer.write(frame)
 
     writer.release()
-
-    # Re-encode with H.264 for quality and compatibility (avoids double-degradation)
-    raw_path = output_path + ".raw.mp4"
-    os.rename(output_path, raw_path)
-    subprocess.run(
-        ["ffmpeg", "-y", "-i", raw_path,
-         "-c:v", "libx264", "-preset", "fast", "-crf", "18",
-         "-pix_fmt", "yuv420p", "-an", output_path],
-        check=True, capture_output=True,
-    )
-    os.remove(raw_path)
 
 
 MODEL_URL = "https://github.com/fabio-sim/Depth-Anything-ONNX/releases/download/v2.0.0/depth_anything_v2_vits.onnx"

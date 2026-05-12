@@ -13,7 +13,7 @@ test.describe("Authentication", () => {
     await expect(page.getByLabel(/name/i)).toBeVisible();
     await expect(page.getByLabel(/email/i)).toBeVisible();
     await expect(page.getByLabel(/password/i)).toBeVisible();
-    await expect(page.getByRole("button", { name: /create|sign up|get started/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /create.*account|sign up|get started|free account/i })).toBeVisible();
   });
 
   test("signup validates email format", async ({ page }) => {
@@ -22,7 +22,7 @@ test.describe("Authentication", () => {
     await page.getByLabel(/name/i).fill("Test User");
     await page.getByLabel(/email/i).fill("not-an-email");
     await page.getByLabel(/password/i).fill("TestPass123!");
-    await page.getByRole("button", { name: /create|sign up|get started/i }).click();
+    await page.getByRole("button", { name: /create.*account|sign up|get started|free account/i }).click();
 
     // Browser HTML5 validation or toast error
     const emailInput = page.getByLabel(/email/i);
@@ -43,7 +43,7 @@ test.describe("Authentication", () => {
     await page.getByLabel(/name/i).fill("Test User");
     await page.getByLabel(/email/i).fill(`test+${Date.now()}@example.com`);
     await page.getByLabel(/password/i).fill("short");
-    await page.getByRole("button", { name: /create|sign up|get started/i }).click();
+    await page.getByRole("button", { name: /create.*account|sign up|get started|free account/i }).click();
 
     // HTML5 minLength validation fires before JS — check the input is invalid
     const pwInput = page.getByLabel(/password/i);
@@ -98,7 +98,7 @@ test.describe("Authentication", () => {
     await page.getByLabel(/name/i).fill("E2E Tester");
     await page.getByLabel(/email/i).fill(uniqueEmail);
     await page.getByLabel(/password/i).fill("TestPass123!");
-    await page.getByRole("button", { name: /create|sign up|get started/i }).click();
+    await page.getByRole("button", { name: /create.*account|sign up|get started|free account/i }).click();
 
     // May need email confirmation — accept any post-signup state
     await page.waitForTimeout(3000);

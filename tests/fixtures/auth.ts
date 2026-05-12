@@ -7,15 +7,16 @@ import path from "path";
 import fs from "fs";
 
 const AUTH_STATE_FILE = path.resolve(__dirname, "../.auth-state.json");
+const TEST_LISTING_FILE = path.resolve(__dirname, "../.test-listing-id");
 
 type AuthFixtures = {
   authPage: Page;
   authContext: BrowserContext;
+  testListingId: string | null;
 };
 
 export const test = base.extend<AuthFixtures>({
   authContext: async ({ browser }, use) => {
-    // Load saved auth state if it exists
     const options = fs.existsSync(AUTH_STATE_FILE)
       ? { storageState: AUTH_STATE_FILE }
       : {};
@@ -26,6 +27,14 @@ export const test = base.extend<AuthFixtures>({
   authPage: async ({ authContext }, use) => {
     const page = await authContext.newPage();
     await use(page);
+  },
+  testListingId: async ({}, use) => {
+    const fromEnv = process.env.TEST_LISTING_ID;
+    if (fromEnv) { await use(fromEnv); return; }
+    const fromFile = fs.existsSync(TEST_LISTING_FILE)
+      ? fs.readFileSync(TEST_LISTING_FILE, "utf8").trim()
+      : null;
+    await use(fromFile || null);
   },
 });
 

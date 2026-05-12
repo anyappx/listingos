@@ -1007,6 +1007,9 @@ async function run() {
     await cropTo4x5(finalPath, output4x5).catch((e) => console.warn("[pipeline] 4:5 crop failed:", e.message));
     console.log("[pipeline] Extra formats (1:1, 4:5) created");
 
+    // Validate extra format files — 0-byte files must not be uploaded
+    const isValidVideo = (p) => fs.existsSync(p) && fs.statSync(p).size > 10_000;
+
     // Step 11: Thumbnails (primary + 5-frame selector)
     const thumbPath = path.join(tmpDir, "thumb.jpg");
     await extractThumbnail(finalPath, thumbPath).catch((e) => console.warn("[pipeline] Thumbnail failed:", e.message));
@@ -1027,10 +1030,10 @@ async function run() {
         : Promise.resolve(""),
     ]);
 
-    // Upload extra formats
+    // Upload extra formats (skip 0-byte files)
     const [url1x1, url4x5, urlGif] = await Promise.all([
-      fs.existsSync(output1x1) ? uploadOutput(output1x1, `${jobId}/1x1.mp4`, "video/mp4") : Promise.resolve(""),
-      fs.existsSync(output4x5) ? uploadOutput(output4x5, `${jobId}/4x5.mp4`, "video/mp4") : Promise.resolve(""),
+      isValidVideo(output1x1) ? uploadOutput(output1x1, `${jobId}/1x1.mp4`, "video/mp4") : Promise.resolve(""),
+      isValidVideo(output4x5) ? uploadOutput(output4x5, `${jobId}/4x5.mp4`, "video/mp4") : Promise.resolve(""),
       fs.existsSync(gifPath) ? uploadOutput(gifPath, `${jobId}/preview.gif`, "image/gif") : Promise.resolve(""),
     ]);
 

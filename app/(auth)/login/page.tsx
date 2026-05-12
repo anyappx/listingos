@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useState, useEffect } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { toast } from "sonner";
@@ -14,11 +14,22 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTo = searchParams.get("redirectTo") || "/dashboard";
+  const oauthError = searchParams.get("error");
+  const oauthErrorDesc = searchParams.get("error_description");
   const supabase = createClient();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (oauthError) {
+      const msg = oauthErrorDesc
+        ? decodeURIComponent(oauthErrorDesc.replace(/\+/g, " "))
+        : "Google login failed. Check your Google OAuth configuration.";
+      toast.error(msg, { duration: 8000 });
+    }
+  }, [oauthError, oauthErrorDesc]);
 
   async function handleEmailLogin(e: React.FormEvent) {
     e.preventDefault();

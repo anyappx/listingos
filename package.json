@@ -16,6 +16,8 @@
     "typecheck": "tsc --noEmit",
     "worker": "node --loader ts-node/esm workers/video.ts",
     "test": "playwright test",
+    "test:unit": "PLAYWRIGHT_PROJECT=unit playwright test --project=unit",
+    "test:e2e": "playwright test --project=e2e",
     "test:ui": "playwright test --ui",
     "test:movie": "playwright test tests/e2e/10-full-movie.spec.ts",
     "test:generate": "playwright test tests/e2e/05-generate-and-verify.spec.ts",

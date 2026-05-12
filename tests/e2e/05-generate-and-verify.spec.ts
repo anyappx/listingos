@@ -24,8 +24,13 @@ let sharedUrl16x9 = "";
 let sharedUrl9x16 = "";
 const tmpDir = path.join(os.tmpdir(), "listingos-e2e");
 
+// Requires: worker running (node scripts/worker-poll.js) + FFmpeg + live Redfin access
+// Skip in standard CI unless RUN_VIDEO_GENERATION=true
+const RUN_VIDEO_GENERATION = process.env.RUN_VIDEO_GENERATION === "true";
+
 test.describe.serial("Video Generation (2 min end-to-end)", () => {
   test.setTimeout(200_000); // 3.3 minutes total
+  test.skip(!RUN_VIDEO_GENERATION, "Video generation requires RUN_VIDEO_GENERATION=true (worker + FFmpeg required)");
 
   test("Step 1: Import listing via Redfin URL", async ({ authPage: page }) => {
     fs.mkdirSync(tmpDir, { recursive: true });
@@ -40,15 +45,17 @@ test.describe.serial("Video Generation (2 min end-to-end)", () => {
     // Submit
     await page.locator("form").first().getByRole("button").first().click();
 
-    // Wait for photo grid — scraping can take 20s
-    await expect(
-      page.locator("img").nth(1)
-    ).toBeVisible({ timeout: 50000 });
+    // Wait for at least 3 photos — Continue button requires photos.length >= 3
+    await page.waitForFunction(
+      () => document.querySelectorAll("img").length >= 3,
+      { timeout: 50000, polling: 1000 }
+    );
 
-    console.log("[test] Photos loaded, proceeding to Continue");
+    console.log("[test] 3+ photos loaded, proceeding to Continue");
 
-    // Click Continue
+    // Click Continue (enabled once ≥ 3 photos are loaded)
     const continueBtn = page.getByRole("button", { name: /continue|next|customize/i }).last();
+    await expect(continueBtn).toBeEnabled({ timeout: 5000 });
     await continueBtn.click();
 
     await page.waitForURL(/\/customize/, { timeout: 15000 });

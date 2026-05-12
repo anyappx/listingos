@@ -15,12 +15,14 @@ export const ScrapeInputSchema = z.object({
 
 export const GenerateInputSchema = z.object({
   listingId: z.string().uuid("Invalid listing ID"),
-  style: z.enum(["modern", "luxury", "energetic", "minimal"]),
+  style: z.enum(["modern", "luxury", "energetic", "minimal", "cinematic", "coastal", "desert", "urban"]),
   durationSeconds: z.union([
     z.literal(15),
     z.literal(30),
     z.literal(45),
     z.literal(60),
+    z.literal(90),
+    z.literal(120),
   ]),
   formats: z.enum(["both", "16x9", "9x16"]),
   musicTrackId: z.string().uuid("Invalid music track ID"),

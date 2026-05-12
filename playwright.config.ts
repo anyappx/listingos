@@ -4,7 +4,6 @@ import path from "path";
 const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:4000";
 
 export default defineConfig({
-  testDir: "./tests/e2e",
   testMatch: "**/*.spec.ts",
   fullyParallel: false,       // serial: tests share state (auth session)
   forbidOnly: !!process.env.CI,
@@ -30,8 +29,14 @@ export default defineConfig({
   globalSetup: path.resolve(__dirname, "tests/global-setup.ts"),
   projects: [
     {
-      name: "chromium",
+      name: "e2e",
+      testDir: "./tests/e2e",
       use: { ...devices["Desktop Chrome"] },
+    },
+    {
+      name: "unit",
+      testDir: "./tests/unit",
+      use: {},  // no browser needed for unit tests
     },
   ],
   outputDir: "test-results/",

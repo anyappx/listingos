@@ -76,6 +76,8 @@ const DURATIONS = [
   { value: 30, label: "30s", description: "Most platforms" },
   { value: 45, label: "45s", description: "YouTube Shorts" },
   { value: 60, label: "60s", description: "Full showcase" },
+  { value: 90, label: "90s", description: "Property tour" },
+  { value: 120, label: "120s", description: "Full walkthrough" },
 ];
 
 const HEADLINE_OPTIONS = [
