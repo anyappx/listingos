@@ -518,24 +518,66 @@ function parseRealtorHtml(html: string): ScrapedData {
 }
 
 async function scrapeRealtor(url: string): Promise<ScrapedData> {
-  // Layer 1: fast HTTP GET (no browser)
-  try {
-    const html = await gotFetch(url, "https://www.realtor.com/");
-    if (html.includes("__NEXT_DATA__")) {
-      const data = parseRealtorHtml(html);
-      console.log(`[scraper] Realtor.com got-scraping: ${data.photoUrls.length} photos, address="${data.address}"`);
-      return data;
-    }
-    console.warn("[scraper] Realtor.com got-scraping returned no __NEXT_DATA__, falling back to Playwright");
-  } catch (e) {
-    console.warn("[scraper] Realtor.com got-scraping failed:", (e as Error).message, "— trying Playwright");
-  }
+  const { execSync } = await import("child_process");
+  const path = await import("path");
 
-  // Layer 2: Playwright (warm up homepage first to pass bot checks)
-  const html = await playwrightFetch(["https://www.realtor.com/", url], 2000);
-  const data = parseRealtorHtml(html);
-  console.log(`[scraper] Realtor.com Playwright: ${data.photoUrls.length} photos, address="${data.address}"`);
-  return data;
+  // Find a Python 3.10+ binary (HomeHarvest requires 3.10+ for union type syntax)
+  const python = (() => {
+    if (process.platform === "win32") return "python";
+    const candidates = ["python3.13", "python3.12", "python3.11", "python3.10", "python3"];
+    for (const p of candidates) {
+      try {
+        const ver = execSync(`${p} --version 2>&1`, { encoding: "utf-8", timeout: 3000 }).trim();
+        const match = ver.match(/Python 3\.(\d+)/);
+        if (match && parseInt(match[1], 10) >= 10) return p;
+      } catch {}
+    }
+    return "python3";
+  })();
+
+  const scriptPath = path.join(process.cwd(), "scripts", "scrape-realtor.py");
+
+  console.log("[scraper] Using HomeHarvest for Realtor.com");
+
+  try {
+    const output = execSync(
+      `${python} "${scriptPath}" "${url}"`,
+      { timeout: 45000, encoding: "utf-8", maxBuffer: 10 * 1024 * 1024 }
+    );
+
+    const lines = output.trim().split("\n");
+    const jsonLine = lines[lines.length - 1];
+    const data = JSON.parse(jsonLine) as {
+      error?: string;
+      address: string; city: string; state: string; zip: string;
+      price: number | null; beds: number | null; baths: number | null; sqft: number | null;
+      description: string; photoUrls: string[];
+    };
+
+    if (data.error) throw new Error(data.error);
+    if (!data.photoUrls || data.photoUrls.length === 0) throw new Error("No photos found in listing");
+
+    console.log(`[scraper] HomeHarvest: ${data.photoUrls.length} photos, address="${data.address}, ${data.city}, ${data.state}"`);
+
+    return {
+      address: data.address,
+      city: data.city,
+      state: data.state,
+      zip: data.zip,
+      price: data.price,
+      beds: data.beds,
+      baths: data.baths,
+      sqft: data.sqft,
+      description: data.description,
+      photoUrls: data.photoUrls,
+      source: "realtor.com",
+      warnings: [],
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn("[scraper] HomeHarvest failed:", msg);
+    throw new Error(`Realtor.com scrape failed: ${msg}. Try uploading photos manually.`);
+  }
 }
 
 // ─── Street suffix set ────────────────────────────────────────────────────────
