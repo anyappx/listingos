@@ -88,7 +88,7 @@ const TRACK_BPM = {
 function calcPhotoTiming(totalPhotos, targetDuration) {
   const FIXED = INTRO_DURATION + OUTRO_DURATION; // 5s
   const MIN_CLIP_D = 2.5;
-  const MAX_PHOTOS = totalPhotos; // use ALL photos
+  const MAX_PHOTOS = Math.min(totalPhotos, 12); // cap at 12 for ~40s Reel-length video
 
   // clip_d = (targetDuration - FIXED + XFADE × (1 + photos)) / photos
   for (let n = MAX_PHOTOS; n >= 1; n--) {
@@ -205,15 +205,11 @@ function generateParallaxClip(imagePath, outputPath, duration, presetIndex, cust
     if (!require("fs").existsSync(pythonScript)) {
       return reject(new Error("parallax-cpu.py not found"));
     }
-    const rawOutput = outputPath.replace(".mp4", "-raw.mp4");
-    const cmd = `${python3} "${pythonScript}" "${imagePath}" "${rawOutput}" ${preset.motion} ${preset.intensity} ${duration} ${preset.reverse}`;
+    // parallax-cpu.py outputs H.264 directly (single-pass) — no re-encode needed here
+    const cmd = `${python3} "${pythonScript}" "${imagePath}" "${outputPath}" ${preset.motion} ${preset.intensity} ${duration} ${preset.reverse}`;
     try {
       execSync(cmd, { stdio: "pipe", timeout: 90000 });
-      // Re-encode mpeg4 → H.264 for xfade compatibility
-      ffrun(ffmpegLib(rawOutput)
-        .outputOptions(["-c:v libx264", "-preset fast", "-crf 18", "-pix_fmt yuv420p", "-r 30", "-an", "-movflags +faststart"])
-        .output(outputPath)
-      ).then(() => { require("fs").unlink(rawOutput, () => {}); resolve(); }).catch(reject);
+      resolve();
     } catch (e) {
       reject(new Error(`parallax-cpu.py failed: ${e.stderr?.toString()?.slice(0, 200) || e.message}`));
     }
@@ -694,11 +690,11 @@ async function ensureWatermarkPng(publicDir) {
   if (fs.existsSync(wmPath)) return wmPath;
   try {
     const sharp = require("sharp");
-    const svg = `<svg width="400" height="120" xmlns="http://www.w3.org/2000/svg">
-      <text x="200" y="80" font-family="Arial, Helvetica, sans-serif" font-size="48" font-weight="700"
-            fill="rgba(255,255,255,0.35)" text-anchor="middle" transform="rotate(-20,200,60)">ListingOS</text>
+    const svg = `<svg width="320" height="60" xmlns="http://www.w3.org/2000/svg">
+      <text x="160" y="42" font-family="Arial, Helvetica, sans-serif" font-size="32" font-weight="600"
+            fill="rgba(255,255,255,0.25)" text-anchor="middle" letter-spacing="2">ListingOS</text>
     </svg>`;
-    await sharp({ create: { width: 400, height: 120, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
+    await sharp({ create: { width: 320, height: 60, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } })
       .composite([{ input: Buffer.from(svg), blend: "over" }])
       .png()
       .toFile(wmPath);
@@ -715,7 +711,7 @@ function applyCinemaGrade(inputPath, outputPath) {
   return ffrun(
     ffmpegLib(inputPath)
       .complexFilter([
-        "[0:v]noise=alls=3:allf=t,eq=saturation=1.12:contrast=1.04:brightness=0.01,vignette=PI/5[vout]"
+        "[0:v]noise=alls=5:allf=t,eq=saturation=1.18:contrast=1.06:brightness=0.02,vignette=PI/4[vout]"
       ])
       .outputOptions([
         "-map [vout]", "-map 0:a?",
@@ -805,6 +801,22 @@ async function generateMockContent(listing) {
   };
 }
 
+// ─── Floor plan detector (>55% near-white pixels = floor plan / diagram) ──────
+async function isFloorPlan(imagePath) {
+  try {
+    const sharp = require("sharp");
+    const { data, info } = await sharp(imagePath)
+      .resize(100, 100, { fit: "cover" })
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    let whiteCount = 0;
+    for (let i = 0; i < data.length; i += info.channels) {
+      if (data[i] > 240 && data[i + 1] > 240 && data[i + 2] > 240) whiteCount++;
+    }
+    return whiteCount / (info.width * info.height) > 0.55;
+  } catch { return false; }
+}
+
 // ─── Main pipeline ────────────────────────────────────────────────────────────
 async function run() {
   const tmpDir = path.join(__dirname, "../tmp", jobId);
@@ -826,7 +838,10 @@ async function run() {
     if (allPhotos.length === 0) throw new Error("No photos on listing");
 
     const { photoCount, clipDuration: baseClipDuration } = calcPhotoTiming(allPhotos.length, durationSeconds);
-    const photos = allPhotos.slice(0, photoCount);
+    // Fix F: sort — cover photo first, then by order
+    const photos = allPhotos
+      .slice(0, photoCount)
+      .sort((a, b) => (b.is_cover ? 1 : 0) - (a.is_cover ? 1 : 0) || a.order - b.order);
     // Beat-align clip duration to music track BPM
     const earlyMusicPath = getMusicPath(style);
     const trackStem = earlyMusicPath ? path.basename(earlyMusicPath, ".mp3") : null;
@@ -847,6 +862,11 @@ async function run() {
       const photo = photos[i];
       try {
         await downloadFile(photo.url, rawPath);
+        // Fix B: skip floor plans (diagrams, Matterport previews, site maps)
+        if (await isFloorPlan(rawPath)) {
+          console.log(`[pipeline] Skipping floor plan: photo-${i}`);
+          continue;
+        }
         const preprocessedPath = await preprocessPhoto(rawPath, processedPath);
 
         // Per-photo enhancements (LOS-038): apply sky replace or day-to-dusk if flagged
@@ -929,7 +949,7 @@ async function run() {
     const lowerThirdPngPath = path.join(tmpDir, "lower-third.png");
     await createLowerThirdPng(listing.address, brand?.agent_name, listing.price, lowerThirdPngPath);
     const outroStart = totalVideoDuration - OUTRO_DURATION;
-    const lowerThirdOut = outroStart - 0.5;
+    const lowerThirdOut = Math.min(LOWER_THIRD_IN + 6, outroStart - 0.5); // visible ~6s, not entire video
     const withLowerPath = path.join(tmpDir, "with-lower.mp4");
     await overlayAnimatedLowerThird(withStatsPath, lowerThirdPngPath, LOWER_THIRD_IN, lowerThirdOut, withLowerPath);
     console.log("[pipeline] Lower-third animated overlay applied");
