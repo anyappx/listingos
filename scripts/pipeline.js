@@ -167,7 +167,19 @@ function escapeXml(str) {
 
 function ffrun(cmd) {
   return new Promise((resolve, reject) => {
-    cmd.on("end", () => resolve()).on("error", reject).run();
+    const stderr = [];
+    let settled = false;
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      const detail = stderr.slice(-6).join(" | ");
+      reject(new Error(err.message + (detail ? " — " + detail : "")));
+    };
+    cmd
+      .on("stderr", (line) => stderr.push(line))
+      .on("end", () => { if (!settled) { settled = true; resolve(); } })
+      .on("error", fail)
+      .run();
   });
 }
 
@@ -918,6 +930,7 @@ async function run() {
     const introClipPath = path.join(tmpDir, "intro.mp4");
     await createIntroCard(listing, brand, introImgPath);
     await loopCardToVideo(introImgPath, INTRO_DURATION, introClipPath);
+    if (!fs.existsSync(introClipPath)) throw new Error("Intro card video was not created — ffmpeg may have failed silently");
     console.log("[pipeline] Intro card created");
 
     // Step 3: M5 — Create outro card → video
@@ -934,6 +947,7 @@ async function run() {
     const outroClipPath = path.join(tmpDir, "outro.mp4");
     await createOutroCard(brand, headshotPath, outroImgPath);
     await loopCardToVideo(outroImgPath, OUTRO_DURATION, outroClipPath);
+    if (!fs.existsSync(outroClipPath)) throw new Error("Outro card video was not created — ffmpeg may have failed silently");
     console.log("[pipeline] Outro card created");
 
     // Step 4: Assemble all clips [intro, ...photos, outro] with xfade
