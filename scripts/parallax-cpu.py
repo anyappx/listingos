@@ -98,32 +98,32 @@ def render_parallax(
 
         # --- Camera path per motion preset (use target w/h for consistent magnitudes) ---
         if motion == "dolly":
-            scale = 1.0 + t * intensity * 0.12
+            scale = 1.0 + t * intensity * 0.07
             dx = dy = 0.0
 
         elif motion == "horizontal":
-            dx = (t - 0.5) * intensity * width * 0.08
+            dx = (t - 0.5) * intensity * width * 0.05
             dy = 0.0
             scale = 1.0
 
         elif motion == "vertical":
             dx = 0.0
-            dy = (t - 0.5) * intensity * height * 0.06
+            dy = (t - 0.5) * intensity * height * 0.04
             scale = 1.0
 
         elif motion == "zoom":
-            scale = 1.0 + t * intensity * 0.18
+            scale = 1.0 + t * intensity * 0.10
             dx = dy = 0.0
 
         elif motion == "orbital":
-            dx = np.sin(t * np.pi) * intensity * width * 0.05
-            dy = np.cos(t * np.pi * 0.5) * intensity * height * 0.02
+            dx = np.sin(t * np.pi) * intensity * width * 0.03
+            dy = np.cos(t * np.pi * 0.5) * intensity * height * 0.012
             scale = 1.0 + t * 0.02
 
         elif motion == "circle":
             angle = t * np.pi * 0.6
-            dx = np.sin(angle) * intensity * width * 0.04
-            dy = (1.0 - np.cos(angle)) * intensity * height * 0.03
+            dx = np.sin(angle) * intensity * width * 0.025
+            dy = (1.0 - np.cos(angle)) * intensity * height * 0.018
             scale = 1.0
 
         else:  # fallback = dolly
@@ -158,12 +158,13 @@ def render_parallax(
         # FIX H: Crop overscan frame back to target dimensions
         frame = frame[cy_off:cy_off + height, cx_off:cx_off + width]
 
-        # FIX I: Depth-of-field — blur background proportional to inverse depth
+        # Subtle DOF: only blur the deepest 20% of background; house/details stay sharp
         depth_crop = render_depth[cy_off:cy_off + height, cx_off:cx_off + width]
-        for sigma in [1, 2, 4]:
-            blurred = cv2.GaussianBlur(frame, (0, 0), sigma)
-            mask = ((1.0 - depth_crop) > sigma * 0.25).astype(np.float32)[..., np.newaxis]
-            frame = (frame * (1 - mask) + blurred * mask).astype(np.uint8)
+        bg_mask = ((1.0 - depth_crop) > 0.8).astype(np.float32)
+        bg_mask = cv2.GaussianBlur(bg_mask, (0, 0), 5)
+        bg_mask = bg_mask[..., np.newaxis]
+        blurred = cv2.GaussianBlur(frame, (0, 0), 2)
+        frame = (frame * (1.0 - bg_mask) + blurred * bg_mask).astype(np.uint8)
 
         writer.write(frame)
 
@@ -174,7 +175,7 @@ def render_parallax(
     os.rename(output_path, raw)
     subprocess.run(
         [FFMPEG_BIN, "-y", "-i", raw,
-         "-c:v", "libx264", "-preset", "fast", "-crf", "18",
+         "-c:v", "libx264", "-preset", "fast", "-crf", "15",
          "-pix_fmt", "yuv420p", "-an", output_path],
         check=True, capture_output=True,
     )

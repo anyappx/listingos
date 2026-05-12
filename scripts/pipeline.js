@@ -72,7 +72,7 @@ const W = 1920;
 const H = 1080;
 const INTRO_DURATION = 2.5;    // intro card
 const OUTRO_DURATION = 2.5;    // outro card
-const XFADE_DURATION = 0.5;    // crossfade between each segment
+const XFADE_DURATION = 0.3;    // crossfade between each segment
 const LOWER_THIRD_IN = 3.5;    // seconds into full video (after intro)
 const STATS_START = 6.5;       // seconds into full video
 const STATS_END = 9.0;
@@ -305,7 +305,7 @@ async function createIntroCard(listing, brand, outputPath) {
         fill="white" text-anchor="middle" letter-spacing="-1">${escapeXml(address)}</text>
   <!-- Price -->
   ${price ? `<text x="${cx}" y="${H / 2 + 80}" font-family="Arial, Helvetica, sans-serif" font-size="52" font-weight="700"
-        fill="${accentColor}" text-anchor="middle">${escapeXml(price)}</text>` : ""}
+        fill="#ffffff" text-anchor="middle">${escapeXml(price)}</text>` : ""}
   <!-- Agent credit -->
   ${agentName ? `<text x="${cx}" y="${H - 60}" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="400"
         fill="rgba(255,255,255,0.6)" text-anchor="middle">${escapeXml(agentName)}${brokerage ? "  ·  " + escapeXml(brokerage) : ""}</text>` : ""}
@@ -719,7 +719,7 @@ function applyCinemaGrade(inputPath, outputPath) {
   return ffrun(
     ffmpegLib(inputPath)
       .complexFilter([
-        "[0:v]noise=alls=5:allf=t,eq=saturation=1.18:contrast=1.06:brightness=0.02,vignette=PI/4[vout]"
+        "[0:v]noise=alls=2:allf=t,eq=saturation=1.18:contrast=1.06:brightness=0.02,vignette=PI/7[vout]"
       ])
       .outputOptions([
         "-map [vout]", "-map 0:a?",
