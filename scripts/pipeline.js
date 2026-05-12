@@ -913,6 +913,10 @@ async function run() {
 
         const preset = photo.camera ? { motion: photo.camera, intensity: photo.intensity || 1.0 } : PARALLAX_PRESETS[i % PARALLAX_PRESETS.length];
         await generateParallaxClip(finalPhotoPath, clipPath, photo.clipDuration || CLIP_DURATION, i, preset);
+        if (!fs.existsSync(clipPath)) {
+          console.error(`[pipeline] Clip ${i} file missing after generation — skipping`);
+          continue;
+        }
         console.log(`[pipeline] Clip ${i} done (${preset.motion})`);
 
         clipPaths.push(clipPath);
