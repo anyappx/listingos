@@ -460,52 +460,33 @@ async function scrapeRedfin(url: string): Promise<ScrapedData> {
   return data;
 }
 
-// ─── Realtor.com — pure HTTP GET, no browser needed ──────────────────────────
+// ─── Realtor.com ──────────────────────────────────────────────────────────────
+// Layer 1: got-scraping (fast, no browser). Layer 2: Playwright (reliable fallback).
 
-async function scrapeRealtor(url: string): Promise<ScrapedData> {
-  const html = await gotFetch(url, "https://www.realtor.com/");
-
+function parseRealtorHtml(html: string): ScrapedData {
   const $ = cheerio.load(html);
-
-  // Extract __NEXT_DATA__ JSON blob
   const m = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
-  if (!m) throw new Error("Could not find listing data on Realtor.com page");
+  if (!m) throw new Error("Could not find __NEXT_DATA__ in Realtor.com page");
 
   let nd: Record<string, unknown> = {};
   try { nd = JSON.parse(m[1]); } catch { throw new Error("Failed to parse Realtor.com JSON"); }
 
   const pp = (nd?.props as Record<string, unknown>)?.pageProps as Record<string, unknown>;
-
-  // Try multiple JSON paths — Realtor.com uses different structures across listing types
   const property =
     (pp?.property as Record<string, unknown>) ||
     ((pp?.data as Record<string, unknown>)?.home as Record<string, unknown>) ||
-    ((pp?.initialReduxState as Record<string, unknown>)?.propertyDetails as Record<string, unknown>)?.listingDetail as Record<string, unknown> ||
+    (((pp?.initialReduxState as Record<string, unknown>)?.propertyDetails as Record<string, unknown>)?.listingDetail as Record<string, unknown>) ||
     ((pp?.componentProps as Record<string, unknown>)?.propertyData as Record<string, unknown>) ||
-    ((pp?.propertyData as Record<string, unknown>)) ||
-    {} as Record<string, unknown>;
+    (pp?.propertyData as Record<string, unknown>) ||
+    ({} as Record<string, unknown>);
 
-  // Address
   const location = (property.location as Record<string, unknown>) || {};
   const addrBlock = (location.address as Record<string, string>) || {};
-  const address =
-    addrBlock.line ||
-    $('[data-testid="street-address"]').text().trim() ||
-    "";
-  const city =
-    addrBlock.city ||
-    $('[data-testid="city"]').text().trim() ||
-    "";
-  const state =
-    addrBlock.state_code ||
-    $('[data-testid="state"]').text().trim() ||
-    "";
-  const zip =
-    addrBlock.postal_code ||
-    $('[data-testid="postal-code"]').text().trim() ||
-    "";
+  const address = addrBlock.line || $('[data-testid="street-address"]').text().trim() || "";
+  const city = addrBlock.city || $('[data-testid="city"]').text().trim() || "";
+  const state = addrBlock.state_code || $('[data-testid="state"]').text().trim() || "";
+  const zip = addrBlock.postal_code || $('[data-testid="postal-code"]').text().trim() || "";
 
-  // Listing details
   const details = (property.description as Record<string, unknown>) || {};
   const listPrice = (property.list_price as number) || (details.list_price as number) || 0;
   const price = listPrice > 0 ? listPrice : parsePrice($('[data-testid="list-price"]').text());
@@ -519,50 +500,48 @@ async function scrapeRealtor(url: string): Promise<ScrapedData> {
     $('[data-testid="listing-description"]').text().trim() ||
     "";
 
-  // Photos — recursively find all rdcpix.com hrefs in the JSON tree,
-  // then normalise to full-resolution ("-o" suffix = original size)
   const photoSet = new Set<string>();
-
-  function findRealtorPhotos(obj: unknown) {
+  function findPhotos(obj: unknown) {
     if (!obj || typeof obj !== "object") return;
-    if (Array.isArray(obj)) { obj.forEach(findRealtorPhotos); return; }
+    if (Array.isArray(obj)) { obj.forEach(findPhotos); return; }
     const rec = obj as Record<string, unknown>;
     if (typeof rec.href === "string" && rec.href.includes("rdcpix.com")) {
-      // Normalise to full-res: replace any size suffix (-s, -m, -l, -t…) with -o
-      const fullRes = rec.href
-        .replace(/[?&](w|h|width|height)=\d+/g, "")
-        .replace(/-[a-z]\d*\.jpg/i, "-o.jpg");
-      photoSet.add(fullRes);
+      photoSet.add(rec.href.replace(/[?&](w|h|width|height)=\d+/g, "").replace(/-[a-z]\d*\.jpg/i, "-o.jpg"));
     }
-    Object.values(rec).forEach(findRealtorPhotos);
+    Object.values(rec).forEach(findPhotos);
   }
-
-  try { findRealtorPhotos(nd); } catch {}
-
-  // Also pick up any rdcpix images rendered in HTML
+  try { findPhotos(nd); } catch {}
   $('img[src*="rdcpix.com"]').each((_, el) => {
     const src = $(el).attr("src");
     if (src) photoSet.add(src.replace(/-[a-z]\d*\.jpg/i, "-o.jpg"));
   });
 
   if (!address && photoSet.size === 0) {
-    throw new Error("Could not extract property data from Realtor.com — page structure may have changed");
+    throw new Error("Could not extract property data from Realtor.com page");
   }
 
-  return {
-    address,
-    city,
-    state,
-    zip,
-    price,
-    beds,
-    baths,
-    sqft,
-    description,
-    photoUrls: [...photoSet],
-    source: "realtor.com",
-    warnings: [],
-  };
+  return { address, city, state, zip, price, beds, baths, sqft, description, photoUrls: [...photoSet], source: "realtor.com", warnings: [] };
+}
+
+async function scrapeRealtor(url: string): Promise<ScrapedData> {
+  // Layer 1: fast HTTP GET (no browser)
+  try {
+    const html = await gotFetch(url, "https://www.realtor.com/");
+    if (html.includes("__NEXT_DATA__")) {
+      const data = parseRealtorHtml(html);
+      console.log(`[scraper] Realtor.com got-scraping: ${data.photoUrls.length} photos, address="${data.address}"`);
+      return data;
+    }
+    console.warn("[scraper] Realtor.com got-scraping returned no __NEXT_DATA__, falling back to Playwright");
+  } catch (e) {
+    console.warn("[scraper] Realtor.com got-scraping failed:", (e as Error).message, "— trying Playwright");
+  }
+
+  // Layer 2: Playwright (warm up homepage first to pass bot checks)
+  const html = await playwrightFetch(["https://www.realtor.com/", url], 2000);
+  const data = parseRealtorHtml(html);
+  console.log(`[scraper] Realtor.com Playwright: ${data.photoUrls.length} photos, address="${data.address}"`);
+  return data;
 }
 
 // ─── Street suffix set ────────────────────────────────────────────────────────
