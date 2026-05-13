@@ -500,7 +500,7 @@ async function createOutroCard(brand, headshotPath, outputPath) {
         fill="rgba(255,255,255,0.7)" text-anchor="${textAnchor}">${escapeXml(brokerage)}</text>` : ""}
   <!-- Phone -->
   ${phone ? `<text x="${textX}" y="${H / 2 + 70}" font-family="Arial, Helvetica, sans-serif" font-size="38" font-weight="600"
-        fill="${accentColor}" text-anchor="${textAnchor}">${escapeXml(phone)}</text>` : ""}
+        fill="#ffffff" text-anchor="${textAnchor}">${escapeXml(phone)}</text>` : ""}
   <!-- CTA -->
   <text x="${textX}" y="${H / 2 + 145}" font-family="Arial, Helvetica, sans-serif" font-size="26" font-weight="400"
         fill="rgba(255,255,255,0.55)" text-anchor="${textAnchor}">Contact me today to schedule a showing</text>
@@ -624,7 +624,7 @@ function cropTo9x16(inputPath, outputPath) {
     ffmpegLib(inputPath)
       .videoFilter("crop=ih*9/16:ih:(iw-ih*9/16)/2:0,scale=1080:1920")
       .outputOptions([
-        "-c:v libx264", "-preset fast", "-crf 23", "-pix_fmt yuv420p",
+        "-c:v libx264", "-preset fast", "-crf 18", "-pix_fmt yuv420p",
         "-c:a copy", "-movflags +faststart",
       ])
       .output(outputPath)
@@ -636,7 +636,7 @@ function cropTo1x1(inputPath, outputPath) {
   return ffrun(
     ffmpegLib(inputPath)
       .videoFilter("crop=ih:ih:(iw-ih)/2:0,scale=1080:1080")
-      .outputOptions(["-c:v libx264", "-preset fast", "-crf 23", "-pix_fmt yuv420p", "-c:a copy", "-movflags +faststart"])
+      .outputOptions(["-c:v libx264", "-preset fast", "-crf 18", "-pix_fmt yuv420p", "-c:a copy", "-movflags +faststart"])
       .output(outputPath)
   );
 }
@@ -646,7 +646,7 @@ function cropTo4x5(inputPath, outputPath) {
   return ffrun(
     ffmpegLib(inputPath)
       .videoFilter("crop=iw:iw*5/4:(iw-iw)/2:(ih-iw*5/4)/2,scale=1080:1350")
-      .outputOptions(["-c:v libx264", "-preset fast", "-crf 23", "-pix_fmt yuv420p", "-c:a copy", "-movflags +faststart"])
+      .outputOptions(["-c:v libx264", "-preset fast", "-crf 18", "-pix_fmt yuv420p", "-c:a copy", "-movflags +faststart"])
       .output(outputPath)
   );
 }
@@ -735,7 +735,7 @@ function applyCinemaGrade(inputPath, outputPath) {
       ])
       .outputOptions([
         "-map [vout]", "-map 0:a?",
-        "-c:v libx264", "-preset fast", "-crf 23", "-pix_fmt yuv420p",
+        "-c:v libx264", "-preset fast", "-crf 18", "-pix_fmt yuv420p",
         "-c:a copy", "-movflags +faststart",
       ])
       .output(outputPath)
@@ -998,7 +998,7 @@ async function run() {
                 `[1:v]scale=400:-1[wm]`,
                 `[0:v][wm]overlay=W-w-40:H-h-40[vout]`,
               ])
-              .outputOptions(["-map [vout]", "-map 0:a?", "-c:v libx264", "-preset fast", "-crf 23", "-pix_fmt yuv420p", "-c:a copy", "-movflags +faststart"])
+              .outputOptions(["-map [vout]", "-map 0:a?", "-c:v libx264", "-preset fast", "-crf 18", "-pix_fmt yuv420p", "-c:a copy", "-movflags +faststart"])
               .output(wmOutPath)
           );
           withWatermarkPath = wmOutPath;
