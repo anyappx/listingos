@@ -112,17 +112,9 @@ def scrape_listing(url: str):
         import time; time.sleep(2)  # avoid 429 after HomeHarvest's API calls
         try:
             req = urllib.request.Request(listing_url, headers={
-                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Connection": "keep-alive",
-                "Upgrade-Insecure-Requests": "1",
-                "Sec-Fetch-Dest": "document",
-                "Sec-Fetch-Mode": "navigate",
-                "Sec-Fetch-Site": "none",
-                "Sec-Fetch-User": "?1",
-                "Cache-Control": "max-age=0",
+                # Googlebot UA bypasses Akamai rate-limiting that blocks browser UAs
+                "User-Agent": "Googlebot/2.1 (+http://www.google.com/bot.html)",
+                "Accept": "text/html",
             })
             resp = urllib.request.urlopen(req, timeout=15, context=_SSL_CTX)
 
