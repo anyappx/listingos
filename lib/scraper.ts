@@ -517,6 +517,93 @@ function parseRealtorHtml(html: string): ScrapedData {
   return { address, city, state, zip, price, beds, baths, sqft, description, photoUrls: [...photoSet], source: "realtor.com", warnings: [] };
 }
 
+// ─── Realtor.com detail API — full photo gallery ──────────────────────────────
+// The search API (hulk_main_srp) hard-limits photos to 2-3.
+// The detail API returns ALL photos when queried with a property_id.
+async function fetchRealtorPhotos(propertyId: string): Promise<string[]> {
+  const { gotScraping } = await import("got-scraping");
+
+  const query = `query PropertyDetail($property_id: ID!) {
+    home(property_id: $property_id) {
+      photos(limit: 200, https: true) {
+        href
+        type
+        description
+      }
+      primary_photo(https: true) {
+        href
+      }
+    }
+  }`;
+
+  try {
+    console.log(`[scraper] Fetching all photos for property ${propertyId}`);
+    const response = await gotScraping({
+      url: "https://www.realtor.com/api/v1/hulk?client_id=rdc-x&schema=vesta",
+      method: "POST",
+      headers: {
+        "authority": "www.realtor.com",
+        "accept": "application/json",
+        "accept-language": "en-US,en;q=0.9",
+        "content-type": "application/json",
+        "origin": "https://www.realtor.com",
+        "referer": "https://www.realtor.com/",
+        "sec-fetch-dest": "empty",
+        "sec-fetch-mode": "cors",
+        "sec-fetch-site": "same-origin",
+        "sec-gpc": "1",
+      },
+      body: JSON.stringify({
+        query,
+        variables: { property_id: propertyId },
+      }),
+      headerGeneratorOptions: {
+        browsers: [{ name: "chrome", minVersion: 128 }],
+        devices: ["desktop"],
+        operatingSystems: ["macos"],
+      },
+      timeout: { request: 15000 },
+    });
+
+    const parsed = JSON.parse(response.body) as {
+      data?: { home?: { photos?: { href?: string }[]; primary_photo?: { href?: string } } };
+    };
+    const home = parsed?.data?.home;
+    if (!home) return [];
+
+    const seen = new Set<string>();
+    const photos: string[] = [];
+
+    const normalize = (href: string) =>
+      href
+        .replace(/[?&](w|h|width|height)=\d+/g, "")
+        .replace(/-[a-z]\d*\.jpg/i, "-o.jpg");
+
+    // Primary photo first
+    if (home.primary_photo?.href) {
+      const n = normalize(home.primary_photo.href);
+      seen.add(n);
+      photos.push(n);
+    }
+
+    // Full gallery
+    if (Array.isArray(home.photos)) {
+      for (const photo of home.photos) {
+        if (photo?.href && typeof photo.href === "string") {
+          const n = normalize(photo.href);
+          if (!seen.has(n)) { seen.add(n); photos.push(n); }
+        }
+      }
+    }
+
+    console.log(`[scraper] Detail API returned ${photos.length} photos`);
+    return photos;
+  } catch (err) {
+    console.warn("[scraper] Detail photo fetch failed:", err instanceof Error ? err.message : err);
+    return [];
+  }
+}
+
 async function scrapeRealtor(url: string): Promise<ScrapedData> {
   const { execSync } = await import("child_process");
   const path = await import("path");
@@ -559,6 +646,19 @@ async function scrapeRealtor(url: string): Promise<ScrapedData> {
 
     console.log(`[scraper] HomeHarvest: ${data.photoUrls.length} photos, address="${data.address}, ${data.city}, ${data.state}"`);
 
+    // If we got few photos, upgrade via the detail API (search API limits to 2-3)
+    let photoUrls = data.photoUrls;
+    if (photoUrls.length < 8) {
+      const propIdMatch = url.match(/_(M\d+-\d+)/);
+      if (propIdMatch) {
+        const allPhotos = await fetchRealtorPhotos(propIdMatch[1]);
+        if (allPhotos.length > photoUrls.length) {
+          console.log(`[scraper] Upgraded from ${photoUrls.length} to ${allPhotos.length} photos via detail API`);
+          photoUrls = allPhotos;
+        }
+      }
+    }
+
     return {
       address: data.address,
       city: data.city,
@@ -569,7 +669,7 @@ async function scrapeRealtor(url: string): Promise<ScrapedData> {
       baths: data.baths,
       sqft: data.sqft,
       description: data.description,
-      photoUrls: data.photoUrls,
+      photoUrls,
       source: "realtor.com",
       warnings: [],
     };

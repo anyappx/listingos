@@ -7,12 +7,23 @@ Outputs a single JSON line to stdout; progress logs go to stderr.
 import sys
 import json
 import re
+import ssl
 import urllib.request
 
+# macOS Python 3.10 (python.org installer) ships without system CA certs.
+# Use an unverified context for scraping public read-only pages only —
+# no credentials or sensitive data are ever sent via this context.
+_SSL_CTX = ssl._create_unverified_context()
+
 def normalize_photo_url(url: str) -> str:
+    # Strip query string
     url = url.split("?")[0]
-    for suffix in ["-s.", "-t.", "-l.", "-e."]:
-        url = re.sub(r"-[stle]\.", "-o.", url)
+    # Classic format: hash-fNUMBERs.jpg / -t.jpg / -l.jpg / -e.jpg → -o.jpg
+    url = re.sub(r"-[stle]\.(jpe?g|webp|png)", "-o.jpg", url)
+    # New HomeHarvest format: hash-fNUMBERod-w480_h360_x2.webp → hash-fNUMBERo.jpg
+    url = re.sub(r"od-w\d+_h\d+_x\d+\.(webp|jpe?g|png)", "o.jpg", url)
+    # Normalise subdomain: nh.rdcpix.com → ap.rdcpix.com (full-res CDN node)
+    url = url.replace("//nh.rdcpix.com/", "//ap.rdcpix.com/")
     return url
 
 def scrape_listing(url: str):
@@ -60,13 +71,25 @@ def scrape_listing(url: str):
 
     photo_urls = []
 
+    def safe_str(val) -> str:
+        """Convert a pandas / numpy scalar to str, returning '' for NA/None/nan."""
+        if val is None:
+            return ""
+        try:
+            if str(val) in ("nan", "None", "<NA>", "NaT"):
+                return ""
+        except Exception:
+            return ""
+        return str(val)
+
     # Primary photo from API
-    primary = prop.get("primary_photo") or prop.get("img_src") or ""
-    if isinstance(primary, str) and "rdcpix" in primary:
+    primary = safe_str(prop.get("primary_photo")) or safe_str(prop.get("img_src"))
+    if "rdcpix" in primary:
         photo_urls.append(normalize_photo_url(primary))
 
     # Alt photos from API (comma-separated string or list)
-    alt_photos = prop.get("alt_photos") or ""
+    alt_photos_raw = prop.get("alt_photos")
+    alt_photos = safe_str(alt_photos_raw) if not isinstance(alt_photos_raw, list) else alt_photos_raw
     if isinstance(alt_photos, str):
         for u in alt_photos.split(","):
             u = u.strip()
@@ -81,57 +104,103 @@ def scrape_listing(url: str):
                 if normed not in photo_urls:
                     photo_urls.append(normed)
 
-    # If fewer than 3 photos, try fetching the listing page for __NEXT_DATA__ photos
-    if len(photo_urls) < 3:
-        listing_url = prop.get("property_url") or ""
-        if listing_url:
-            print(f"[scrape-realtor] Only {len(photo_urls)} photo(s) from API — trying page scrape for more", file=sys.stderr)
-            try:
-                req = urllib.request.Request(listing_url, headers={
-                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
-                })
-                resp = urllib.request.urlopen(req, timeout=10)
-                html = resp.read().decode("utf-8", errors="ignore")
-                nd_match = re.search(r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
-                if nd_match:
-                    nd = json.loads(nd_match.group(1))
-                    def find_photos(obj, depth=0):
-                        if depth > 8:
-                            return
-                        if isinstance(obj, dict):
-                            for k, v in obj.items():
-                                if k in ("photos", "photo_list", "responsivePhotos", "originalPhotos"):
-                                    if isinstance(v, list):
-                                        for photo in v:
-                                            href = photo.get("href", "") if isinstance(photo, dict) else ""
-                                            if href and "rdcpix" in href:
-                                                normed = normalize_photo_url(href)
-                                                if normed not in photo_urls:
-                                                    photo_urls.append(normed)
-                                else:
-                                    find_photos(v, depth + 1)
-                        elif isinstance(obj, list):
-                            for item in obj:
-                                find_photos(item, depth + 1)
-                    find_photos(nd)
-            except Exception as page_err:
-                print(f"[scrape-realtor] Page scrape failed (non-fatal): {page_err}", file=sys.stderr)
+    # Always try the detail page for the full gallery — HomeHarvest's search API
+    # is hard-limited to 2-3 photos; the listing page __NEXT_DATA__ has all of them.
+    listing_url = prop.get("property_url") or ""
+    if listing_url:
+        print(f"[scrape-realtor] Upgrading photos via page scrape (have {len(photo_urls)} so far)", file=sys.stderr)
+        import time; time.sleep(2)  # avoid 429 after HomeHarvest's API calls
+        try:
+            req = urllib.request.Request(listing_url, headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+                "Cache-Control": "max-age=0",
+            })
+            resp = urllib.request.urlopen(req, timeout=15, context=_SSL_CTX)
 
-    print(f"[scrape-realtor] Found {len(photo_urls)} photo(s) for {prop.get('full_street_line', address)}", file=sys.stderr)
+            raw = resp.read()
+            # urllib doesn't auto-decompress; handle gzip/br if needed
+            content_encoding = resp.headers.get("Content-Encoding", "")
+            if "gzip" in content_encoding:
+                import gzip
+                raw = gzip.decompress(raw)
+            elif "br" in content_encoding:
+                try:
+                    import brotli
+                    raw = brotli.decompress(raw)
+                except ImportError:
+                    pass  # brotli not installed; decode as-is
+            html = raw.decode("utf-8", errors="ignore")
+
+            nd_match = re.search(r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.DOTALL)
+            if nd_match:
+                nd = json.loads(nd_match.group(1))
+                before = len(photo_urls)
+                seen = set(photo_urls)
+
+                def find_all_photos(obj, depth=0):
+                    """Recursively harvest every rdcpix.com href in the JSON tree."""
+                    if depth > 12:
+                        return
+                    if isinstance(obj, dict):
+                        # Check every string value — catches href, url, src, etc.
+                        for v in obj.values():
+                            if isinstance(v, str) and "rdcpix.com" in v:
+                                normed = normalize_photo_url(v)
+                                if normed not in seen:
+                                    seen.add(normed)
+                                    photo_urls.append(normed)
+                            else:
+                                find_all_photos(v, depth + 1)
+                    elif isinstance(obj, list):
+                        for item in obj:
+                            find_all_photos(item, depth + 1)
+                    elif isinstance(obj, str) and "rdcpix.com" in obj:
+                        normed = normalize_photo_url(obj)
+                        if normed not in seen:
+                            seen.add(normed)
+                            photo_urls.append(normed)
+
+                find_all_photos(nd)
+                print(f"[scrape-realtor] Page scrape added {len(photo_urls) - before} photos (total: {len(photo_urls)})", file=sys.stderr)
+            else:
+                print(f"[scrape-realtor] No __NEXT_DATA__ found on page (may be Akamai-blocked)", file=sys.stderr)
+        except Exception as page_err:
+            print(f"[scrape-realtor] Page scrape failed (non-fatal): {page_err}", file=sys.stderr)
+
+    print(f"[scrape-realtor] Found {len(photo_urls)} photo(s) for {safe_str(prop.get('full_street_line')) or address}", file=sys.stderr)
+
+    def safe_int(val):
+        s = safe_str(val)
+        try: return int(float(s)) if s else None
+        except (ValueError, TypeError): return None
+
+    def safe_float(val):
+        s = safe_str(val)
+        try: return float(s) if s else None
+        except (ValueError, TypeError): return None
 
     result = {
-        "address": str(prop.get("full_street_line") or prop.get("street_address") or ""),
-        "city": str(prop.get("city") or ""),
-        "state": str(prop.get("state") or ""),
-        "zip": str(prop.get("zip_code") or ""),
-        "price": int(prop["list_price"]) if prop.get("list_price") and str(prop["list_price"]) not in ("nan", "None", "") else None,
-        "beds": int(prop["beds"]) if prop.get("beds") and str(prop["beds"]) not in ("nan", "None", "") else None,
-        "baths": float(prop["full_baths"]) if prop.get("full_baths") and str(prop["full_baths"]) not in ("nan", "None", "") else None,
-        "sqft": int(prop["sqft"]) if prop.get("sqft") and str(prop["sqft"]) not in ("nan", "None", "") else None,
-        "description": str(prop.get("text") or prop.get("description") or ""),
+        "address": safe_str(prop.get("full_street_line") or prop.get("street_address")),
+        "city":    safe_str(prop.get("city")),
+        "state":   safe_str(prop.get("state")),
+        "zip":     safe_str(prop.get("zip_code")),
+        "price":   safe_int(prop.get("list_price")),
+        "beds":    safe_int(prop.get("beds")),
+        "baths":   safe_float(prop.get("full_baths")),
+        "sqft":    safe_int(prop.get("sqft")),
+        "description": safe_str(prop.get("text") or prop.get("description")),
         "photoUrls": photo_urls,
         "source": "realtor.com",
-        "propertyUrl": str(prop.get("property_url") or ""),
+        "propertyUrl": safe_str(prop.get("property_url")),
     }
 
     print(json.dumps(result))
